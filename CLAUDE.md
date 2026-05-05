@@ -54,13 +54,26 @@ airspeed, feet for altitude) may be offered as an alternative via the
 `ask_unit` helper, provided the result is converted to SI before being passed
 to any computation module.
 
-**Variable naming authority:**
+**Variable naming, unit, and sign-convention authority:**
 
-`doc/aerospace_variables_reference.csv` is the authoritative source for Python
-variable names. The `code_variable_name` column defines the required identifier
-for every quantity listed. For project-specific quantities not in the CSV, follow
-the same convention: all-lowercase, underscore-separated, SI unit suffix. See
-`doc/analysis_code.md` for the complete symbol tables.
+`doc/aerospace_variables_reference.csv` is the **authoritative** source for Python
+variable names, SI units, and sign conventions. Requirements:
+
+- The `code_variable_name` column defines the required Python identifier. Using
+  any other name for a listed quantity is a defect.
+- The `si_standard_units` column defines the required internal unit. No
+  other unit may be used inside computation modules.
+- The `definition_of_positive` column defines the required sign convention.
+  Violating the sign convention is a defect, even if the numeric result is
+  otherwise correct.
+
+For quantities not yet in the CSV, follow the same pattern: all-lowercase,
+underscore-separated, SI unit suffix, and add the quantity to the CSV before
+(or alongside) implementing it.
+
+The coordinate system, dual-frame rules, and Lomax section-load sign
+conventions are defined in `doc/variable_definition.md` and must be read before
+writing any loads, LRA, or structural computation code.
 
 ---
 
@@ -88,6 +101,8 @@ The `doc/` directory contains the authoritative standards for this project.
 |---|---|
 | [`doc/architecture.md`](doc/architecture.md) | Design principles, layer diagram, directory structure, module responsibilities, dependency rules, data flow, adding new features, what does not belong in the source tree |
 | [`doc/analysis_code.md`](doc/analysis_code.md) | Variable naming conventions, unit suffix reference, standard symbol tables, module-level constants, conversion constants, function signatures, analysis method notes per module |
+| [`doc/variable_definition.md`](doc/variable_definition.md) | **Coordinate systems** (structural frame x-aft/y-starboard/z-up vs. aerodynamic body-axis frame), **Lomax section-load sign conventions**, SI unit suffix rules, atmospheric and speed symbol tables, module-constant and conversion-constant naming patterns |
+| [`doc/aerospace_variables_reference.csv`](doc/aerospace_variables_reference.csv) | **Authoritative variable name registry** — every quantity's required Python identifier (`code_variable_name`), SI unit, and sign convention (`definition_of_positive`). Must be read before writing any computation code |
 | [`doc/loads_aero_db.md`](doc/loads_aero_db.md) | Aerodynamic database file format, column schema, interpolation method, Mach extrapolation policy — authoritative reference for `aero_db.py` |
 | [`doc/ui.md`](doc/ui.md) | TUI aesthetic, library roles, workflow pattern (input → analysis → output), colour palette, panel/table/prompt/navigation conventions, module structure, cross-platform notes |
 

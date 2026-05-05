@@ -141,14 +141,17 @@ Internal representation is radians; degrees are used only at the UI boundary.
 
 ### Structural loads (at LRA / grid point)
 
-| Quantity | Code variable | Symbol |
-|---|---|---|
-| Spanwise shear | `vz_n` | *V*_z |
-| Chordwise shear | `vy_n` | *V*_y |
-| Axial force | `fx_n` | *F*_x |
-| Bending moment (out-of-plane) | `mx_nm` | *M*_x |
-| Torsion | `my_nm` | *M*_y |
-| In-plane bending | `mz_nm` | *M*_z |
+All section loads are in the **structural frame** (x aft, y starboard, z up) and follow the
+**Lomax §5** sign convention. See `doc/variable_definition.md` for derivations.
+
+| Quantity | Code variable | Symbol | Positive direction |
+|---|---|---|---|
+| Vertical shear | `vz_n` | *V*_z | +z (upward); positive under lift loading |
+| Chordwise shear | `vx_n` | *V*_x | +x (aft); positive under drag loading |
+| Spanwise axial | `fy_n` | *F*_y | +y (outboard); tension positive |
+| Out-of-plane bending | `mx_nm` | *M*_x | Upward bending; upper surface compression; Lomax positive |
+| Torsion | `my_nm` | *M*_y | Leading edge UP (nose-up); Lomax positive torsion |
+| In-plane bending | `mz_nm` | *M*_z | +x (aft) displacement; chordwise bending |
 
 ### Aircraft geometry and mass
 
@@ -194,6 +197,24 @@ bare literal `1.5` where the factor of safety is applied.
 | Gear normal load | `n_gear_n` | N at contact point |
 | Brake torque | `t_brake_nm` | N·m |
 | Brake friction coefficient | `mu_brake_nd` | dimensionless |
+| Gust mass ratio | `mu_g_nd` | dimensionless; see §b2 formula |
+
+### Continuous turbulence — 2-DOF model
+
+| Quantity | Code variable | SI unit | Notes |
+|---|---|---|---|
+| Short-period natural frequency | `omega_sp_rad_s` | rad/s | from 2-DOF eigenvalue |
+| Short-period damping ratio | `zeta_sp_nd` | — | dimensionless |
+| PSD of gust velocity | `phi_u_m2_s` | m²·s/rad | Von Kármán spectrum at frequency ω |
+| FRF of load response (generic) | `h_load_nd` | varies | complex ndarray over frequency grid |
+| FRF of load factor | `h_nz_nd` | nd / (m/s) | complex; nz per unit gust velocity |
+| FRF of wing root bending moment | `h_my_nm` | N·m / (m/s) | complex |
+| RMS normal load factor | `sigma_nz_nd` | — | standard deviation |
+| RMS wing root bending moment | `sigma_my_nm` | N·m | standard deviation |
+| Turbulence intensity | `sigma_w_m_s` | m/s | from `APP_CONFIG`; default 1.0 m/s |
+| Turbulence scale length | `l_turb_m` | m | 762 m (2 500 ft) per AC 25.341-1 |
+| PSD limit load factor | `k_sigma_nd` | — | per AC 25.341-1; default 3.0 |
+| Frequency integration variable | `omega_rad_s` | rad/s | frequency grid array |
 
 ### Condition list
 
@@ -415,7 +436,7 @@ No time integration is performed.
 
    Moment arm from mass point to LRA determines inertia bending and torsion
    contributions. Aerodynamic and inertia contributions are summed at each LRA
-   station to give net section loads: `vz_n`, `vy_n`, `fx_n`, `mx_nm`, `my_nm`,
+   station to give net section loads: `vz_n`, `vx_n`, `fy_n`, `mx_nm`, `my_nm`,
    `mz_nm`.
 
 4. **Aeroelastic corrections** (`aeroelastic.py`) — when the elastic model is
@@ -491,22 +512,26 @@ component.
 
 **Modules:** `maneuver.py` → `aero_db.py` → `loads.py`
 
-#### b2) Discrete gust — 1-cosine (FAR 25.341(a))
+#### b2) Discrete gust — static equivalent method (Phase 1)
 
-**Method:** Apply a 1-cosine vertical or lateral gust velocity increment to the
-trim flight state. Compute quasi-steady loads at the worst-case gust gradient H.
+**Regulatory basis:** original FAR Part 25 Appendix G, pre-Amendment 25-86
+(1996), as described in Lomax, *Structural Loads Analysis for Commercial
+Transport Aircraft*, AIAA 1996, Chapter 4.
 
-Gust velocity profile over penetration distance s (m):
+**Phase 1 method — no 1-cosine profile; no H sweep.**
 
-```
-u_gust_inst_m_s(s) = (u_gust_m_s / 2) × (1 - cos(π × s / h_gust_m))
-    for 0 ≤ s ≤ 2 × h_gust_m
-```
+Design gust velocities (pre-1996 FAR Part 25 Appendix G, converted to SI at
+ingestion in `gust.py`):
 
-Design gust velocity `u_gust_m_s` from FAR 25.341(a) table: 17.07 m/s EAS at
-sea level, reducing to 6.36 m/s at 18 288 m (60 000 ft).
+| Altitude | Imperial | SI |
+|---|---|---|
+| Sea level (0 m) | 50 fps EAS | 15.24 m/s EAS |
+| 20 000 ft (6 096 m) | 25 fps EAS | 7.62 m/s EAS |
 
-Gust alleviation factor per FAR 25.341(a)(4) — dimensionless, unit-independent:
+Interpolation: linear between 0 m and 6 096 m. Above 6 096 m: controlled by
+`APP_CONFIG["gust_velocity_above_20kft"]` — `"extrapolate"` (default) or `"cap"`.
+
+Gust alleviation factor (identical formula to the current regulation):
 
 ```
 k_gust_nd = 0.88 × mu_g_nd / (5.3 + mu_g_nd)
@@ -514,34 +539,109 @@ k_gust_nd = 0.88 × mu_g_nd / (5.3 + mu_g_nd)
 mu_g_nd = 2 × m_ac_kg / (rho_kg_m3 × mac_m × s_ref_m2 × a_slope_nd)
 ```
 
-Incremental load factor from gust (all quantities in SI):
+Incremental load factor (all quantities in SI):
 
 ```
 delta_nz_nd = (k_gust_nd × u_gust_m_s × v_eas_m_s × a_slope_nd)
-              / (2 × w_aircraft_n / s_ref_m2)
+              / (2 × (w_aircraft_n / s_ref_m2))
 ```
 
-Gust sweep: evaluate loads at `APP_CONFIG["n_gust_steps"]` values of `h_gust_m`
-spanning 9–107 m (30–350 ft equivalent). The critical gradient is the value that
-produces the largest section load.
+where `w_aircraft_n = m_ac_kg × G_M_S2`. Both positive and negative increments
+are evaluated: `nz_nd = 1.0 ± delta_nz_nd`. `a_slope_nd` is the whole-aircraft
+lift curve slope (per radian) from the trim aerodynamic state.
 
-**Primary variables:** `u_gust_m_s`, `h_gust_m`, `k_gust_nd`, `mu_g_nd`,
-`delta_nz_nd` (Δn_z treated as an increment on the trim `nz_nd` for the
-loads summation)
+`h_gust_m`, `gust_gradient_min_ft`, `gust_gradient_max_ft`, and `n_gust_steps`
+are **not used** in Phase 1; they are reserved for the Phase 2 TDG.
 
-**Modules:** `gust.py` (TBD — see decision.md §11) → `aero_db.py` → `loads.py`
+**Primary variables:** `u_gust_m_s`, `k_gust_nd`, `mu_g_nd`, `a_slope_nd`,
+`delta_nz_nd`, `rho_kg_m3`, `mac_m`, `s_ref_m2`, `m_ac_kg`, `w_aircraft_n`,
+`v_eas_m_s`
 
-#### b3) Continuous turbulence — PSD (FAR 25.341(b))
+**Modules:** `gust.py` (see decision.md §11) → `aero_db.py` → `loads.py`
 
-Method and implementation path are subject to decision.md §2.
-Placeholder: this load path requires frequency response functions of the aircraft.
-See decision.md §2 for the three implementation options.
+##### b2-Phase2) Discrete gust — 1-cosine TDG (Phase 2 / deferred)
 
-**Primary variables:** power spectral density `phi_u_nd` (Φ_U(ω)), frequency
-response function `h_load_nd` (H_load(ω)), RMS load `sigma_load`, limit load
-= `k_nd × sigma_load` where `k_nd` is per AC 25.341-1.
+**Regulatory basis:** FAR 25.341(a); AC 25.341-1 (Amendment 25-86 and later).
 
-**Modules:** TBD pending decision.md §2
+Gust velocity profile:
+`u_gust_inst_m_s(s) = (u_gust_m_s / 2) × (1 − cos(π × s / h_gust_m))`
+for `0 ≤ s ≤ 2 × h_gust_m`. Design gust velocities from current FAR 25.341(a)
+table: 17.07 m/s EAS at sea level, 6.36 m/s at 18 288 m. H sweep from 9 to
+107 m (30–350 ft) using `n_gust_steps`. This sub-section is a placeholder only;
+Phase 2 implementation is deferred.
+
+#### b3) Continuous turbulence — 2-DOF rigid-body frequency response (Phase 1)
+
+**Regulatory basis:** FAR 25.341(b); AC 25.341-1.
+
+**Phase 1 method:** self-contained 2-DOF rigid-body plunge-pitch model with
+strip-theory aerodynamics. No DLM, no NASTRAN required.
+
+**Equations of motion (frequency domain):**
+
+State vector: `[w_m_s (heave velocity), theta_rad (pitch angle)]`.
+The 2×2 system in the frequency domain:
+
+```
+(-ω² × M_sys + j×ω × C_sys + K_sys) × X(ω) = F_gust(ω)
+```
+
+`M_sys`, `C_sys`, `K_sys` are assembled from aircraft mass properties and
+strip-theory derivatives (`a_slope_nd`, `a_tail_nd`, `v_tail_nd`). The
+short-period natural frequency and damping ratio are extracted from the
+eigenvalues of the system matrix and stored as `omega_sp_rad_s` and
+`zeta_sp_nd`.
+
+**Frequency response functions:**
+
+For each frequency in the grid `omega_rad_s`, solve the 2×2 system to yield:
+
+```
+h_nz_nd(jω)  — complex FRF: load factor per unit gust velocity [(m/s)/(m/s)]
+h_my_nm(jω)  — complex FRF: wing root bending moment per unit gust velocity [N·m/(m/s)]
+```
+
+Frequency grid: logarithmically spaced, 0.01–100 rad/s, ≥ 500 points.
+
+**Von Kármán turbulence PSD (FAR 25.341(b), AC 25.341-1):**
+
+```
+phi_u_m2_s(ω) = sigma_w_m_s² × (l_turb_m / π) ×
+    (1 + (8/3) × (1.339 × l_turb_m × ω / v_tas_m_s)²) /
+    (1 + (1.339 × l_turb_m × ω / v_tas_m_s)²)^(11/6)
+```
+
+`sigma_w_m_s` from `APP_CONFIG` (default 1.0 m/s).
+`l_turb_m = 762 m` (2 500 ft) per AC 25.341-1.
+
+**RMS load computation:**
+
+```python
+sigma_nz_nd = sqrt(trapz(abs(h_nz_nd)**2 * phi_u_m2_s, omega_rad_s))
+sigma_my_nm = sqrt(trapz(abs(h_my_nm)**2 * phi_u_m2_s, omega_rad_s))
+```
+
+**Design limit loads:**
+
+```
+nz_limit_nd = k_sigma_nd × sigma_nz_nd
+my_limit_nm = k_sigma_nd × sigma_my_nm
+```
+
+`k_sigma_nd = 3.0` (limit load factor method per AC 25.341-1); configurable
+in `config/defaults.json`.
+
+**Primary variables:** `omega_sp_rad_s`, `zeta_sp_nd`, `phi_u_m2_s`,
+`h_nz_nd`, `h_my_nm`, `sigma_nz_nd`, `sigma_my_nm`, `sigma_w_m_s`,
+`l_turb_m`, `k_sigma_nd`, `omega_rad_s`
+
+**Modules:** `gust.py` (see decision.md §11) → `aero_db.py` → `loads.py`
+
+##### b3-Phase2) Continuous turbulence — DLM/NASTRAN PSD (Phase 2 / deferred)
+
+Phase 2 replaces the 2-DOF rigid-body FRF with FRFs from a full NASTRAN DLM or
+ZONA51 aerodynamic analysis on the flexible structure. Regulatory basis: FAR
+25.341(b); AC 25.341-1. Deferred to a future release.
 
 ---
 
@@ -740,9 +840,10 @@ all four analysis methods as the common reference for section-load output.
 
 | Function | Purpose |
 |---|---|
-| `build_lra(...)` | Construct LRA from input file data |
-| `resolve_position(y_m, ...)` | Return LRA reference point nearest to spanwise station |
-| `sum_to_lra(strip_loads, ...)` | Integrate distributed strip loads to discrete LRA section cuts |
+| `load_lra(filepath)` | Parse and validate one `lra_<surface>.json`; raises `ValueError` on any violation |
+| `build_lra(filepaths)` | Load all surface LRA files; returns `{surface_tag: stations_list}` |
+| `resolve_position(pos_m, stations)` | Return index of LRA station nearest to 3-D position `pos_m`; projects onto piecewise-linear spine — handles kinked (winglet) LRAs |
+| `sum_to_lra(strip_forces_m, strip_positions_m, stations)` | Integrate strip loads to LRA section cuts using full 3-D moment arm; returns `(N, 6)` array `[vz_n, vx_n, fy_n, mx_nm, my_nm, mz_nm]` |
 
 ---
 
@@ -796,7 +897,7 @@ summed to LRA section cuts identically to inertia loads.
 
 Applies `FS = 1.5` to all limit loads to produce ultimate loads per FAR 25.303.
 
-**Output:** `vz_n[i]`, `vy_n[i]`, `fx_n[i]`, `mx_nm[i]`, `my_nm[i]`,
+**Output:** `vz_n[i]`, `vx_n[i]`, `fy_n[i]`, `mx_nm[i]`, `my_nm[i]`,
 `mz_nm[i]` at each LRA station `i` — both limit and ultimate.
 
 ---

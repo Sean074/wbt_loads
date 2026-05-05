@@ -39,6 +39,7 @@ and why the structure is organised the way it is.
 │  src/mass_model.py  — distributed mass (CONM2)     │
 │  src/trim.py        — trim solver                  │
 │  src/maneuver.py    — maneuver time history        │
+│  src/gust.py        — discrete & continuous gust loads │
 │  src/loads.py       — loads summation to LRA/grid  │
 │  src/aeroelastic.py — aeroelastic corrections      │
 │  src/lra.py         — loads reference axis + grid  │
@@ -77,6 +78,7 @@ wbt_loads/
 │   ├── mass_model.py        # Computation — distributed mass (NASTRAN CONM2)
 │   ├── trim.py              # Computation — trim solver
 │   ├── maneuver.py          # Computation — maneuver time history
+│   ├── gust.py              # Computation — discrete & continuous gust loads
 │   ├── loads.py             # Computation — loads summation to LRA/grid points
 │   ├── aeroelastic.py       # Computation — aeroelastic corrections + jig shape
 │   ├── lra.py               # Data model — loads reference axis and grid
@@ -182,12 +184,17 @@ point masses with position vectors.
 
 ### `src/lra.py` — Loads reference axis
 
-Defines the Loads Reference Axis and the spanwise/chord load reporting grid.
-Provides helper functions to resolve positions and sum loads to reference points.
+Defines the Loads Reference Axis as a piecewise-linear 3-D spine of oriented
+reference points. Each surface (wing, HT, VT, fuselage) has an independent LRA
+loaded from its own JSON file. The spine may be kinked (e.g. winglets); station
+ordering is defined by the user in the JSON file, not enforced by a single
+monotone spatial axis. Provides helpers to assign strip positions to the nearest
+LRA station via minimum 3-D distance to the spine, and to integrate strip loads
+to discrete section cuts.
 
 The inertia and aerodynamic loads are both summed to the LRA reporting points.
 
-**Allowed to import:** `numpy`
+**Allowed to import:** `json`, `pathlib`, `numpy`
 
 **Must not contain:** display logic or aerodynamic data.
 
@@ -215,6 +222,32 @@ pull-out, yaw). Produces loads as a function of time using scipy ODE integration
 `unit_convert`
 
 **Must not contain:** display logic.
+
+---
+
+### `src/gust.py` — Gust loads
+
+Implements two Phase 1 gust load paths:
+
+1. **Static equivalent discrete gust (pre-Amendment 25-86):** computes
+   `k_gust_nd`, `mu_g_nd`, and `delta_nz_nd` from the pre-1996 FAR design gust
+   velocities. Returns `delta_nz_nd` as an increment on the trim load factor for
+   consumption by `loads.py`. Condition routing: `maneuver_type` in
+   `{discrete_gust_vertical, discrete_gust_lateral}`.
+
+2. **2-DOF rigid-body continuous turbulence:** assembles the 2-DOF plunge-pitch
+   system matrices from aircraft mass properties and strip-theory derivatives,
+   computes complex FRFs `h_nz_nd(jω)` and `h_my_nm(jω)`, evaluates the Von
+   Kármán PSD `phi_u_m2_s(ω)`, integrates numerically to produce RMS loads
+   `sigma_nz_nd` and `sigma_my_nm`, and returns design limit loads
+   (`k_sigma_nd × σ`). Condition routing: `maneuver_type == continuous_turbulence`.
+
+Phase 2 deferred paths (1-cosine TDG, DLM-based PSD FRFs) will be added here.
+
+**Allowed to import:** `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`,
+`unit_convert`, `config`
+
+**Must not contain:** display logic, trim or maneuver logic.
 
 ---
 
@@ -273,6 +306,7 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | `src/lra.py` | `numpy` |
 | `src/trim.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/maneuver.py` | `aero_db`, `mass_model`, `lra`, `trim`, `numpy`, `scipy`, `unit_convert` |
+| `src/gust.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/loads.py` | `aero_db`, `mass_model`, `lra`, `unit_convert` |
 | `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `numpy`, `scipy` |
 | `src/unit_convert.py` | nothing |

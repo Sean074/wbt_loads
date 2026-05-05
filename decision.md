@@ -248,7 +248,41 @@ without external validation.
 Mark FAR 25.341(b) as requiring an external tool. Implement only discrete
 1-cosine gust per FAR 25.341(a). State explicitly in the spec.
 
-**Direction:** [ ]
+**Direction:** [x]
+
+**Phase 1 (this release) — two separate methods, both self-contained:**
+
+*Discrete gust — static equivalent method (pre-Amendment 25-86):*
+Implement the static equivalent gust formula from Lomax §4 and the original
+FAR Part 25 Appendix G (before Amendment 25-86, 1996). Design gust velocity
+`u_gust_m_s` is taken from the pre-1996 regulatory table (50 fps EAS / 15.24 m/s
+at sea level; 25 fps EAS / 7.62 m/s at 20 000 ft; linear interpolation between
+altitudes). There is no 1-cosine profile and no sweep over gust gradient H.
+The gust alleviation factor `k_gust_nd` uses the same mass ratio formula as the
+current regulation. The incremental load factor `delta_nz_nd` is computed with
+the static equivalent formula (see `doc/analysis_code.md §b2`). This is NOT the
+modern Tuned Discrete Gust (TDG); it is an earlier, simpler approach adequate for
+early-design sizing. Regulatory basis: original FAR 25 Appendix G (pre-Amendment
+25-86). The config keys `gust_gradient_min_ft`, `gust_gradient_max_ft`, and
+`n_gust_steps` are reserved for Phase 2 and unused in Phase 1.
+
+*Continuous turbulence — simplified 2-DOF rigid-body frequency response (Option B):*
+Implement a self-contained rigid-body plunge-pitch frequency response model using
+strip-theory aerodynamics (no DLM, no NASTRAN required). The model computes
+complex FRFs H_nz(jω) and H_My(jω) for vertical load factor and wing root bending
+moment, integrates against the Von Kármán turbulence PSD per FAR 25.341(b) and
+AC 25.341-1, and derives RMS section loads σ_load. Design limit loads are
+`k_sigma_nd × σ_load` where `k_sigma_nd = 3.0` (limit load factor method per
+AC 25.341-1). Suitable for early-design sizing; external DLM validation required
+before certification. See `doc/analysis_code.md §b3`.
+
+**Phase 2 (deferred — future release):**
+Full NASTRAN DLM or ZONA51 analysis for proper PSD continuous turbulence FRFs
+and the 1-cosine Tuned Discrete Gust (TDG) per current FAR 25.341(a) and
+AC 25.341-1. Requires a separate DLM aerodynamic model and a modal structural FEM
+result. The condition list `maneuver_type` values `discrete_gust_vertical`,
+`discrete_gust_lateral`, and `continuous_turbulence` remain valid for Phase 2
+routing once that code path exists.
 
 ---
 
@@ -268,7 +302,27 @@ Add landing gear spring/damper as an additional input. Integrate gear stroke
 during landing impact to compute time-varying reaction. Higher fidelity;
 significantly more complex.
 
-**Direction:** [ ]
+**Direction:** [x]
+
+**Phase 1 (this release) — quasi-static reserve energy method (Option A):**
+Use the FAR 25.473 reserve energy formula to compute the peak vertical gear
+reaction from the design sink rate and gear stroke. No gear spring/damper model
+required. `eta_gear_nd` (gear absorption efficiency, default 0.80 per
+FAR 25.473(b)) and `d_stroke_m` (available gear stroke) are user-supplied per
+condition or from `config/defaults.json`. The peak reaction is applied as a
+quasi-static vertical load at the gear attachment point; the effective load
+factor `nz_eff_nd = f_gear_n / w_aircraft_n` is passed to `loads.py`. All
+landing sub-cases (level, tail-down, one-gear, lateral drift, rebound) are
+implemented using the quasi-static gear reaction. Static ground handling cases
+(braked roll, ground turn, nose-wheel yaw, towing, pivoting, jacking) are also
+quasi-static and require no gear model. See `doc/analysis_code.md §c` and `§d`.
+
+**Phase 2 (deferred — future release):**
+Dynamic impact analysis with a spring-damper gear model per `doc/analysis_code.md
+§d3`. Requires gear spring stiffness `k_gear_n_m` and damping `c_gear_ns_m` as
+additional inputs. Integrates the coupled aircraft + gear equations of motion to
+produce a time-history of gear attachment loads. Phase 2 replaces `§d1` for
+landing conditions only; static ground handling (§c) remains quasi-static.
 
 ---
 
@@ -288,7 +342,39 @@ to NASTRAN model output.
 A single convention must be chosen, documented in `doc/analysis_code.md`,
 and applied consistently to all strip integration and inertia summation.
 
-**Direction:** [ ]
+**Direction:** [x]
+
+**Global structural coordinate frame (used for all positions, LRA, beam model,
+and section-load reporting):**
+- **x**: positive **AFT** (fuselage stations increase from nose to tail)
+- **y**: positive **STARBOARD** (butt lines increase from centerline outboard to right)
+- **z**: positive **UP** (waterlines increase upward)
+- **Origin**: aircraft datum — FS 0 / BL 0 / WL 0
+
+This follows the aircraft structural convention (fuselage stations / butt lines /
+waterlines) used in NASTRAN aircraft structural models.
+
+**Aerodynamic quantities** (CL, CD, CM, Cn, Cl, CY, α, β, p, q, r, all control
+deflections) retain the **standard aerodynamic body-axis sign convention**:
+x forward, y starboard, z down — per Anderson and Etkin. These quantities are in
+the aerodynamic body frame, NOT the structural frame, and must be explicitly
+transformed when used in structural load computations.
+
+**Section loads (SMT) at each LRA cut** follow the **Lomax §5 sign convention**
+(*Structural Loads Analysis for Commercial Transport Aircraft*, AIAA 1996). For a
+wing cut at y = y_m with the outboard free body (face normal = −ŷ):
+
+| Quantity | Variable | Positive direction | Notes |
+|---|---|---|---|
+| Vertical shear | `vz_n` | +z (upward) | Positive under lift loading |
+| Chordwise shear | `vx_n` | +x (aft) | Positive under drag loading |
+| Spanwise axial | `fy_n` | +y (outboard) | Spanwise tension |
+| Out-of-plane bending | `mx_nm` | Upward bending | Upper surface in compression; Lomax positive |
+| Torsion | `my_nm` | Leading edge up | Nose-up twist; Lomax positive torsion |
+| In-plane bending | `mz_nm` | +x displacement (aft) | Chordwise bending |
+
+The full coordinate system, sign conventions, and variable naming rules are
+documented in `doc/variable_definition.md` and `doc/aerospace_variables_reference.csv`.
 
 ---
 
@@ -306,7 +392,14 @@ Matches how structural sizing is organized.
 One set of stations along the aircraft centerline/spine.
 Simpler to implement; less useful for surface-by-surface structural sizing.
 
-**Direction:** [ ]
+**Direction:** [ x ] Option A — Per-surface LRAs.
+
+User-supplied JSON files define each surface LRA.  The LRA need not be
+straight — kinks (e.g. winglet junctions) are supported by specifying 3-D
+`position_m` coordinates and a per-station `normal_nd` that rotates to match
+the local surface orientation.  Station ordering is defined by the user in the
+JSON file (spine index order); `lra.py` does not enforce a single monotone
+spatial axis.  See `doc/lra_db.md` for the updated file format.
 
 ---
 

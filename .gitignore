@@ -22,6 +22,7 @@ instance/
 .pytest_cache/
 .coverage
 htmlcov/
+scarp*
 
 # IDEs
 .vscode/

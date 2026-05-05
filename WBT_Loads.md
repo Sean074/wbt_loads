@@ -58,16 +58,26 @@ the regulation sections listed.
 ### Yaw maneuver (FAR 25.351)
 * Rudder input from VMC to VD at altitudes per the flight envelope
 
-### Discrete gust (FAR 25.341(a))
-* 1-cosine vertical and lateral gusts over gust gradient H = 30–350 ft
-* Design gust velocities from 56 ft/s EAS at sea level reducing to 20.86 ft/s
-  EAS at 60,000 ft per FAR 25.341(a) table
+### Discrete gust
+
+* **Phase 1 — static equivalent gust (pre-Amendment 25-86):** design gust
+  velocity from original FAR Part 25 Appendix G (Lomax §4): 50 fps EAS
+  (15.24 m/s) at sea level, 25 fps EAS (7.62 m/s) at 20 000 ft, linearly
+  interpolated. No 1-cosine profile; no H sweep. Both positive and negative
+  increments evaluated. Regulatory basis: FAR 25 Appendix G, pre-Amendment
+  25-86 (1996).
+* **Phase 2 (deferred) — 1-cosine TDG:** vertical and lateral gusts per current
+  FAR 25.341(a) and AC 25.341-1; 56 ft/s EAS at sea level to 20.86 ft/s EAS at
+  60 000 ft; H sweep 30–350 ft.
 
 ### Continuous turbulence — power spectral density (FAR 25.341(b), AC 25.341-1)
-* Frequency-domain (PSD) gust method using power spectral density of atmospheric
-  turbulence
-* Requires frequency response functions of the aircraft; turbulence scale L = 2500 ft
-* Mission analysis or limit load factor method per AC 25.341-1
+
+* **Phase 1 — 2-DOF rigid-body FRF:** self-contained plunge-pitch frequency
+  response model with strip-theory aerodynamics; Von Kármán PSD per AC 25.341-1;
+  turbulence scale L = 2 500 ft (762 m); RMS loads by numerical integration;
+  design limit load = 3.0 × σ_load (limit load factor method).
+* **Phase 2 (deferred) — full DLM/NASTRAN FRF:** frequency response functions
+  from NASTRAN DLM or ZONA51 on the flexible structure.
 
 ### High-lift device conditions (FAR 25.345)
 * Flap / slat extended at V_F (design flap speed) at approved configurations
@@ -82,12 +92,15 @@ the regulation sections listed.
 * Hinge moment loads used for surface structural sizing
 
 ### Ground loads (FAR 25.473–25.511)
-* Landing — design sink rate V_sink = 10 fps at maximum landing weight;
-  6 fps at maximum takeoff weight (FAR 25.473)
-* Level landing, tail-down landing, one-gear landing (FAR 25.479–25.483)
-* Braked roll (FAR 25.493) — brake torque reaction, nose-gear steering loads
-* Lateral drift — side load 0.25 × vertical reaction (FAR 25.485)
-* Ground turn (FAR 25.495)
+
+* **Phase 1 — quasi-static reserve energy method (FAR 25.473):** peak gear
+  reaction from energy conservation using design sink rate and gear stroke; no
+  spring-damper model required. Landing sub-cases: level landing, tail-down
+  landing, one-gear landing (FAR 25.479–25.483), lateral drift (FAR 25.485),
+  rebound (FAR 25.487). Static ground handling: braked roll (FAR 25.493),
+  ground turn (FAR 25.495), nose-wheel yaw, towing, pivoting, jacking.
+* **Phase 2 (deferred) — dynamic gear model:** spring-damper gear model with
+  integrated time history of gear attachment loads and airframe section loads.
 
 ## FAR/CS 23 — Normal / Utility / Acrobatic Category
 

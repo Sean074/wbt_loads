@@ -1,181 +1,257 @@
-# Variable Naming Standard
+# Variable Naming, Unit, and Sign-Convention Standard
 
-Applies to all computation modules: `atmos.py`, any future engine files,
-and helper functions called from them. UI and menu code is excluded.
+Applies to **all computation modules** in the WBT Loads project (`src/*.py`).
+UI and menu code is excluded from the computation-variable rules but must convert
+to/from SI at the presentation boundary.
+
+**Cross-references:**
+- `doc/aerospace_variables_reference.csv` — authoritative variable name registry
+  (code name, SI unit, sign convention for every listed quantity)
+- `CLAUDE.md` — project-wide SI requirement and mandatory documentation rules
 
 ---
 
 ## Core rules
 
-1. **Use the standard symbol where one exists.**  Aeronautical and
-   thermodynamic quantities have established symbols from ICAO, ISO 2533, or
-   common textbook convention (e.g. Anderson, Nelson).  Prefer the symbol over
-   an English description.
+1. **Use the registered name.** Every quantity with a row in
+   `doc/aerospace_variables_reference.csv` must use the identifier in the
+   `code_variable_name` column. Using any other name is a defect.
 
-2. **Append the unit as a suffix, separated by `_`.**  The suffix makes the
-   unit visible at every point of use without reading the function signature or
-   docstring.
+2. **Append the SI unit as a suffix.** The suffix makes the unit visible at
+   every point of use. Pattern: `<symbol>_<si_unit_suffix>`.
 
-Combined, the pattern is:
+3. **Observe the sign convention.** The `definition_of_positive` column in
+   `aerospace_variables_reference.csv` defines the required positive direction.
+   An opposite sign is a code defect even if the magnitude is correct.
 
-```
-<symbol>_<unit>
-```
+4. **Convert at the boundary.** Input files in imperial units are converted to
+   SI immediately at ingestion using named constants from `src/unit_convert.py`.
+   Bare numeric conversion literals inside analysis functions are a defect.
 
 ---
 
-## Unit suffix reference
+## Unit suffix reference (SI throughout)
 
-| Dimension | Suffix | Notes |
+| Dimension | SI unit | Suffix | Common import name |
+|---|---|---|---|
+| Length / coordinate | metre | `_m` | — |
+| Area | square metre | `_m2` | — |
+| Mass | kilogram | `_kg` | — |
+| Force | Newton | `_n` | lower-case `n`; distinguishes from `_nd` |
+| Moment / torque | Newton-metre | `_nm` | lower-case `nm` |
+| Pressure / stress | Pascal | `_pa` | — |
+| Density | kg/m³ | `_kg_m3` | — |
+| Speed | metre per second | `_m_s` | — |
+| Angular rate | radian per second | `_rad_s` | — |
+| Angle (internal) | radian | `_rad` | convert from `_deg` before computation |
+| Angle (UI boundary) | degree | `_deg` | never pass to computation functions |
+| Dimensionless | — | `_nd` | coefficients, ratios, Mach, load factors |
+| Frequency (circular) | rad/s | `_rad_s` | same suffix as angular rate |
+| Frequency (cyclic) | hertz | `_hz` | — |
+| Spring stiffness | N/m | `_n_m` | e.g. `k_gear_n_m` |
+| Damping | N·s/m | `_ns_m` | e.g. `c_gear_ns_m` |
+
+---
+
+## Coordinate systems
+
+Two coordinate frames are used. Mixing them without an explicit transformation
+is a defect.
+
+### 1. Global structural reference frame
+
+**Used for:** all position coordinates (LRA stations, beam nodes, mass model
+attachment points), section-load reporting, and any structural geometry.
+
+| Axis | Positive direction | Aircraft geometry |
 |---|---|---|
-| Length / altitude | `_ft`, `_m` | `_ft` is primary; `_m` only at user-input boundary |
-| Pressure | `_psf`, `_psi`, `_pa`, `_atm`, `_bar` | `_psf` is primary throughout the engine |
-| Density | `_slug_ft3` | slug per cubic foot |
-| Temperature | `_degR`, `_degK`, `_degC`, `_degF` | `_degR` is primary (Rankine) |
-| Speed | `_kts`, `_ms` | `_kts` is primary; `_ms` only at conversion boundary |
-| Dimensionless | _(no suffix)_ | Mach, ratios, pure coefficients |
+| **x** | **AFT** | Fuselage station (FS) increases from nose (FS 0) toward tail |
+| **y** | **STARBOARD** | Butt line (BL) increases from centerline (BL 0) outboard to right |
+| **z** | **UP** | Waterline (WL) increases from datum (WL 0) upward |
 
-When a quantity has no unit (ratio, Mach number, exponent intermediate), omit
-the suffix entirely — do not write `_nd` or `_ratio` unless `ratio` is part of
-the standard symbol itself (e.g. `rho_ratio`).
+**Origin:** aircraft datum — FS 0 / BL 0 / WL 0.
+
+Variable names for structural frame positions: `x_m`, `y_m`, `z_m`.
+
+**Frame handedness note:** This follows the aircraft structural convention
+(fuselage stations / butt lines / waterlines) used in NASTRAN aircraft models.
+By the mathematical right-hand rule, `x_aft × y_starboard = z_down`; the z_up
+choice is a deliberate departure from a strict RHR system in order to match
+physical aircraft geometry (waterlines increase upward). Code must not assume
+RHR applies when computing cross-products in this frame.
+
+### 2. Aerodynamic body-axis frame
+
+**Used for:** all aerodynamic coefficients (CL, CD, CM, Cn, Cl, CY), angles
+(α, β), angular rates (p, q, r), body-axis velocity perturbations (u, v, w),
+and all control surface deflections (δ_e, δ_a, δ_r, δ_f, δ_sp, δ_stab).
+
+| Axis | Positive direction | Relation to structural frame |
+|---|---|---|
+| Body x | **FORWARD** | Opposite to structural x (aft) |
+| Body y | **STARBOARD** | Same as structural y |
+| Body z | **DOWN** | Opposite to structural z (up) |
+
+Sign conventions per Anderson (*Introduction to Flight*) and Etkin (*Dynamics of
+Flight*). This is a true right-handed frame (x_fwd × y_stbd = z_down).
+
+**Important:** aerodynamic quantities must NOT be used directly in structural
+frame computations. An explicit rotation (negating x and z components) is
+required when transferring forces or moments from the aerodynamic frame to the
+structural frame.
+
+| Transformation | Formula |
+|---|---|
+| Force in structural frame | `[Fx_struct, Fy_struct, Fz_struct] = [-Fx_aero, Fy_aero, -Fz_aero]` |
+| Moment in structural frame | `[Mx_struct, My_struct, Mz_struct] = [-Mx_aero, My_aero, -Mz_aero]` |
 
 ---
 
-## Standard symbol table
+## Section loads sign convention (Lomax)
+
+Section loads at each LRA cut follow **Lomax §5** (*Structural Loads Analysis
+for Commercial Transport Aircraft*, AIAA 1996, Chapter 5). All loads are
+referenced to the structural frame (x aft, y starboard, z up).
+
+For a **right-wing cut** at spanwise coordinate `y_m = y_cut` (outboard free
+body; cut-face normal = −ŷ):
+
+| Quantity | Variable | Positive direction | Physical meaning under standard flight load |
+|---|---|---|---|
+| Vertical shear | `vz_n` | +z (upward) | Upward shear under lift; Lomax positive S |
+| Chordwise shear | `vx_n` | +x (aft) | Aft-directed shear under drag |
+| Spanwise axial | `fy_n` | +y (outboard) | Tension in span direction |
+| Out-of-plane bending | `mx_nm` | Upward bending | Upper surface in compression; `Mx = ∫ fz·(y−y_cut) dy` |
+| Torsion | `my_nm` | Leading edge UP | Nose-up twist; Lomax positive torsion |
+| In-plane bending | `mz_nm` | +x displacement (aft) | Wing bends toward trailing edge |
+
+**Sign derivations (structural frame):**
+
+- **Vertical shear `vz_n`:** Force from inboard on outboard section in +z direction.
+  Under positive lift (upward, +z), `vz_n > 0`. ✓
+
+- **Out-of-plane bending `mx_nm`:** Right-hand rule about +x_aft axis: moment
+  from inboard on outboard section that rotates the cut face from +y (starboard)
+  toward +z (up). For the outboard free body loaded by upward lift:
+  `Mx = ∫_y_cut^s_m fz(y) × (y − y_cut) dy > 0`. ✓
+
+- **Torsion `my_nm`:** Right-hand rule about +y_starboard axis: positive rotation
+  carries +z (up) toward +x (aft). A point at −x (the leading edge, which is
+  forward of the elastic axis = negative x) rotates toward +z (upward).
+  Therefore positive `my_nm` = leading edge moves upward = **Lomax positive
+  torsion**. ✓
+
+- **For the left wing** (y_cut < 0, outboard free body has cut-face normal = +ŷ),
+  the signs of `vz_n` and `mx_nm` are unchanged (still Lomax positive for
+  upward loading), but `fy_n` is in the −y direction. Results are typically
+  reported for the right wing only (y ≥ 0) and mirrored as required.
+
+---
+
+## Standard symbol tables
 
 ### Atmospheric state
 
-| Quantity | Variable name | Standard symbol |
-|---|---|---|
-| Geopotential pressure altitude | `h_press_ft` | *H* (geopotential) |
-| Geometric altitude | `h_geo_ft` | *h* |
-| Static pressure | `p_static_psf` | *p* |
-| Sea-level reference pressure | `p_0_psf` | *p*₀ |
-| Air density | `rho_slug_ft3` | *ρ* |
-| Sea-level reference density | `rho_0_slug_ft3` | *ρ*₀ |
-| Density ratio | `rho_ratio` | *σ* = *ρ*/*ρ*₀ |
-| Temperature | `T_degR` | *T* |
-| Sea-level reference temperature | `T_0_degR` | *T*₀ |
-
-> **Note on legacy names:** `atmos.py` currently uses `pho_ratio` and
-> `pho_slug_ft3`.  New code must use `rho_ratio` and `rho_slug_ft3`.  Rename
-> existing names when a function is substantively rewritten; do not rename
-> opportunistically.
+| Quantity | Variable | SI unit | Notes |
+|---|---|---|---|
+| Pressure altitude | `h_m` | m | Geopotential; convert from `_ft` at input |
+| Static pressure | `p_static_pa` | Pa | |
+| Sea-level reference pressure | `p_0_pa` | Pa | 101 325 Pa |
+| Air density | `rho_kg_m3` | kg/m³ | |
+| Sea-level reference density | `rho_0_kg_m3` | kg/m³ | 1.225 kg/m³ (ISA) |
+| Density ratio | `rho_ratio` | — | σ = ρ/ρ₀; dimensionless, no suffix |
+| Temperature | `t_k` | K | |
+| Sea-level reference temperature | `t_0_k` | K | 288.15 K (ISA) |
 
 ### Speed
 
-| Quantity | Variable name | Standard symbol |
-|---|---|---|
-| True airspeed | `V_TAS_kts` | *V*_TAS |
-| Calibrated airspeed | `V_CAS_kts` | *V*_CAS |
-| Equivalent airspeed | `V_EAS_kts` | *V*_EAS |
-| Mach number | `M` | *M* |
-| Local speed of sound | `a_kts` | *a* |
-| Sea-level speed of sound | `a_0_kts` | *a*₀ |
-
-> The short aliases `ktas`, `keas`, `kcas` are retained in **dict keys** and
-> **return values** of public functions for backward compatibility.  Inside
-> function bodies, use the full names above.
+| Quantity | Variable | SI unit | Notes |
+|---|---|---|---|
+| True airspeed | `v_tas_m_s` | m/s | |
+| Equivalent airspeed | `v_eas_m_s` | m/s | Used for structural load calculations |
+| Calibrated airspeed | `v_cas_m_s` | m/s | |
+| Mach number | `mach_nd` | — | No unit suffix; dimensionless |
+| Local speed of sound | `a_m_s` | m/s | |
 
 ### Compressible flow
 
-| Quantity | Variable name | Standard symbol |
-|---|---|---|
-| Impact (compressible dynamic) pressure | `q_c_psf` | *q*_c |
-| Ratio of specific heats | `GAMMA` (module constant) | *γ* |
-
----
-
-## Intermediate / helper variables
-
-Short-lived algebraic intermediates that correspond to no single aeronautical
-symbol use a descriptive name that still carries units where applicable.
-Prefer two or three components separated by `_`:
-
-```python
-# good — describes what it holds
-q_numerator   = ...
-q_denominator = ...
-
-# bad — cryptic single letters that are not established symbols
-a = ...
-b = ...
-```
-
-If an intermediate is truly a sub-expression of a larger formula with no
-independent meaning, a single-letter name (`q_a`, `q_b`) is acceptable only
-inside a tightly scoped helper function (fewer than ~15 lines).
-
----
-
-## Function signatures
-
-Apply the same symbol-and-unit rule to parameter names:
-
-```python
-# correct
-def get_atmos_prop_alt(h_press_ft: float) -> dict: ...
-def mach_alt(M: float, h_press_ft: float) -> dict: ...
-
-# incorrect — no unit, generic name
-def mach_alt(speed, alt_defined): ...
-```
-
-Return dicts use the short key aliases (`Mach`, `ktas`, `keas`, `kcas`,
-`q_c`) for backward compatibility with callers and the UI layer.
+| Quantity | Variable | SI unit | Notes |
+|---|---|---|---|
+| Dynamic pressure (compressible) | `q_c_pa` | Pa | Impact pressure; `q_c = p_0[(1+0.2M²)^3.5 − 1]` |
+| Dynamic pressure (incompressible) | `q_dyn_pa` | Pa | `q_dyn = 0.5 × rho_kg_m3 × v_tas_m_s²` |
+| Ratio of specific heats | `GAMMA` | — | Module constant = 1.4; no suffix |
+| Standard gravity | `G_M_S2` | m/s² | Module constant = 9.80665 |
 
 ---
 
 ## Module-level constants
 
-Constants that are physical facts use `ALL_CAPS` with a unit suffix:
+Physical constants and fixed reference values use `ALL_CAPS` with a unit suffix:
 
 ```python
-GAMMA    = 1.4            # dimensionless — no suffix
-A_0_KTS  = 661.4745       # sea-level speed of sound
-P_0_PSF  = 2116.224       # sea-level static pressure
+GAMMA        = 1.4             # ratio of specific heats; dimensionless
+A_0_M_S      = 340.294         # sea-level speed of sound, m/s
+P_0_PA       = 101325.0        # sea-level static pressure, Pa
+RHO_0_KG_M3  = 1.225           # sea-level density, kg/m³
+T_0_K        = 288.15          # sea-level temperature, K
+G_M_S2       = 9.80665         # standard gravity, m/s²
+FS            = 1.5             # factor of safety (FAR 25.303); dimensionless
 ```
 
-Tunable solver parameters belong in `config/defaults.json`, not as
-module-level constants.
+Tunable solver parameters (`trim_tol`, `flex_max_iter`, etc.) belong in
+`config/defaults.json`, not as module-level constants.
 
 ---
 
-## Conversion constants (`unit_convert.py`)
+## Conversion constants (`src/unit_convert.py`)
 
-Conversion factors follow the pattern `<FROM>_<TO>` in `ALL_CAPS`, where
-`<FROM>` and `<TO>` are unit abbreviations:
+Pattern: `<FROM>_<TO>` in `ALL_CAPS`.
 
 ```python
-M_FT   = 3.28084    # metres to feet
-FT_M   = 1 / M_FT
-PA_PSF = 0.020885   # pascals to psf
-PSF_PA = 1 / PA_PSF
-MS_KTS = 1.94384    # m/s to knots
+FT_M       = 0.30480          # feet → metres
+M_FT       = 1.0 / FT_M
+KTS_M_S    = 0.514444         # knots → m/s
+M_S_KTS    = 1.0 / KTS_M_S
+FPS_M_S    = 0.30480          # feet/s → m/s
+LBF_N      = 4.44822          # pound-force → Newtons
+N_LBF      = 1.0 / LBF_N
+SLUG_KG    = 14.5939          # slug → kg
+KG_SLUG    = 1.0 / SLUG_KG
+PSF_PA     = 47.8803          # lbf/ft² → Pa
+PA_PSF     = 1.0 / PSF_PA
+FT_LBF_NM  = 1.35582          # ft·lbf → N·m
+NM_FT_LBF  = 1.0 / FT_LBF_NM
+DEG_RAD    = 0.017453         # degrees → radians (π/180)
+RAD_DEG    = 1.0 / DEG_RAD
 ```
-
-Do not embed conversion factors as bare literals inside analysis functions.
-Import from `unit_convert` and use the named constant.
 
 ---
 
-## Quick reference
+## Function signatures
+
+Apply the variable name and unit-suffix rules to every parameter:
 
 ```python
-# Atmospheric lookup — parameter and locals
-def get_atmos_prop_alt(h_press_ft: float) -> dict:
-    p_static_psf  = ...   # static pressure at altitude
-    rho_slug_ft3  = ...   # air density
-    rho_ratio     = ...   # density ratio sigma
-    T_degR        = ...   # temperature
+# correct — SI units, registered names
+def solve_trim(v_eas_m_s: float, h_m: float, m_ac_kg: float,
+               x_cg_nd: float) -> dict: ...
 
-# Speed conversion — parameter and locals
-def mach_alt(M: float, h_press_ft: float) -> dict:
-    a_kts         = ...   # local speed of sound
-    V_TAS_kts     = M * a_kts
-    V_EAS_kts     = V_TAS_kts * math.sqrt(rho_ratio)
-    q_c_psf       = _dynamic_pressure(M, p_static_psf)
-    V_CAS_kts     = _kcas_from_qc(q_c_psf)
-    return {"Mach": M, "ktas": V_TAS_kts, "keas": V_EAS_kts,
-            "kcas": V_CAS_kts, "q_c": q_c_psf}
+def compute_section_loads(trim_state: dict, strip_aero: dict,
+                          lra: list) -> dict: ...
+
+# incorrect — no unit, ambiguous names
+def solve_trim(speed, altitude, weight, cg): ...
 ```
+
+Return dicts use the registered `code_variable_name` keys.
+
+---
+
+## Legacy notes
+
+The file `doc/variable_definition.md` previously described `atmos.py`-specific
+variables with US customary primary units (`_ft`, `_psf`, `_degR`, `_kts`).
+That convention is superseded by CLAUDE.md (SI internal standard) and this
+document. Any legacy names (`pho_ratio`, `h_press_ft`, `p_static_psf`, etc.)
+must be replaced with the SI names above when the relevant function is
+substantively rewritten.

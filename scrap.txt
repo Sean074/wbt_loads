@@ -1,0 +1,4 @@
+
+Decision 6 FAR 23, OPTION C defer to a future release. Ensure that the program architecture MUST provision for FAR 23 type analysis in the future. Review and update all affected project documentation.
+
+Decision 7. Load Envelope, an independent tool CRITIC_LOADS will be used to post process the output from WBT_LOADS (the loads output will be in the form of NASTRAN FORCE and MOMENT cards for each load case at the LRA reference points).  CRITIC_LOADS is independent of WBT_LOADS. CRITIC_LOADS will use "potato" plots to selct cases that envelope the loading a given load station (as defined by the stress team) additional criteria such as shear flow in spars or gauge stresses may also be used as defined by the stress team.
