@@ -421,7 +421,23 @@ per the applicable regulation.
 
 **Option C — FAR 23 deferred; FAR 25 only for initial release.**
 
-**Direction:** [ ]
+**Direction:** [x] Option C — FAR 23 deferred to a future release.
+
+FAR 25 / CS-25 is the sole regulatory implementation for the initial release.
+The architecture provisions for a future FAR 23 extension through three explicit
+extension points; see `doc/architecture.md §FAR 23 provision`.
+
+When FAR 23 is implemented it will require:
+- A `cert_basis` field in the condition list CSV (values `"FAR25"` | `"FAR23"`)
+  so conditions are routed to the correct regulatory formula set.
+- A new support-layer module `src/far_reg.py` containing FAR 23-specific
+  formulas: maneuver load factors per FAR 23.337 (normal/utility/acrobatic
+  category envelopes) and design gust velocities per FAR 23.341.
+- Routing guards in `src/maneuver.py` and `src/gust.py` that branch on
+  `cert_basis` to call either existing FAR 25 logic or the new `far_reg`
+  functions.
+- No continuous turbulence PSD path for FAR 23 (23.341 requires only the
+  discrete gust method).
 
 ---
 

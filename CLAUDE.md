@@ -130,9 +130,13 @@ change.
 Load conditions are developed per:
 
 - **FAR/CS 25 Subpart C** — transport category (symmetric/asymmetric maneuvers,
-  gust, ground loads)
-- **FAR/CS 23 Subpart C** — normal/utility/acrobatic category
+  gust, ground loads). **Sole implemented regulatory basis for the initial release.**
+- **FAR/CS 23 Subpart C** — normal/utility/acrobatic category. **Deferred to a
+  future release (Decision 6, Option C).** The architecture provisions three
+  extension points: a `cert_basis` field in the condition list, a new support
+  module `src/far_reg.py`, and routing guards in `maneuver.py` and `gust.py`.
+  See `doc/architecture.md §FAR 23 provision` and `decision.md §6`.
 
-Key load cases to support: symmetric pull-up, push-over, rolling pull-out, yaw
-maneuver, discrete and continuous gust (1-cosine and power spectral). The
-condition list input file specifies which cases are active.
+Key load cases implemented (FAR 25 only): symmetric pull-up, push-over, rolling
+pull-out, yaw maneuver, discrete and continuous gust (1-cosine and power
+spectral). The condition list input file specifies which cases are active.

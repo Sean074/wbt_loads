@@ -382,6 +382,12 @@ All equations use SI quantities throughout.
 | Engine failure / asymmetric thrust | 25.367 | 23.367 |
 | Control surface and tab loads | 25.391–25.427 | 23.391–23.427 |
 
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
+
 CS-25 and CS-23 section numbers are identical to their FAR counterparts.
 
 **Method:** Quasi-static equilibrium. The aircraft is in a balanced, non-accelerating
@@ -474,6 +480,12 @@ No time integration is performed.
 | Continuous turbulence — power spectral density | 25.341(b) | — |
 | Dynamic gust loads implementation guidance | AC 25.341-1 / AMC 25.341-1 | — |
 
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
+
 FAR 23 does not require continuous turbulence PSD analysis; the discrete gust
 method per 23.341 is sufficient for FAR 23 certification.
 
@@ -501,6 +513,12 @@ Supported maneuver types and their governing DOF:
 | Checked maneuver | α, q (with pitch rate reversal) | 25.331(c) | 23.331 |
 | Rolling pull-out | α, q, p, φ | 25.349 | 23.349 |
 | Yaw maneuver | β, r (with prescribed δ_r input) | 25.351 | 23.351 |
+
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
 
 **Critical instant extraction:** scan the complete time history for the maximum
 positive and maximum negative value of each load component at each LRA station.
@@ -663,6 +681,12 @@ ZONA51 aerodynamic analysis on the flexible structure. Regulatory basis: FAR
 | Towing loads | 25.509 | 23.509 |
 | Jacking and tie-down provisions | 25.519 | 23.519 |
 
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
+
 **Method:** Quasi-static force and moment balance. No aerodynamic loads; no time
 integration. Applied loads (brake torque, tow force, centrifugal force) are
 balanced by inertia reactions at the CG and structural loads at attachment points.
@@ -677,6 +701,12 @@ Ground handling cases and their governing applied loads:
 | Towing | Tow force at tow fitting; direction per FAR/CS 25.509 | 25.509 | 23.509 |
 | Pivoting | Friction at one main gear with other gear as pivot | 25.503 | 23.503 |
 | Jacking | Vertical jack load at each jack point | 25.519 | 23.519 |
+
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
 
 **Sequence:**
 
@@ -715,6 +745,12 @@ condition list; typical value 0.80 for dry runway per FAR 25.493.
 | Taxi, takeoff and landing roll | 25.491 | 23.491 |
 | Ground load dynamic conditions | 25.511 | 23.511 |
 | Landing gear dynamic loads — implementation guidance | AC 25.491-1 | — |
+
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
 
 **Method:** Two options — quasi-static reserve energy method (simpler) or dynamic
 impact analysis (higher fidelity). The method is subject to decision.md §3.
@@ -755,6 +791,12 @@ load components:
 | One-gear landing | 100% of limit vertical at one main gear | 0.25 × vertical (outboard) | per 25.479 | 25.483 | 23.483 |
 | Lateral drift | Per level landing | 0.25 × vertical (side) | — | 25.485 | 23.485 |
 | Rebound | Aircraft lifts off after ground contact; gear fully extended | — | — | 25.487 | 23.487 |
+
+> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
+> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
+> formulas. When FAR 23 is implemented, formula dispatch will occur via
+> `src/far_reg.py` and a `cert_basis` field in the condition list; see
+> `doc/architecture.md §FAR 23 provision`.
 
 For tail-down landing, the aircraft contacts at angle `alpha_td_rad` (the attitude
 at which the tail structure first contacts the runway), applying a nose-up
@@ -922,3 +964,54 @@ load type), cruise trim state dict, baseline rigid section loads from `loads.py`
 
 **Outputs:** flexibility-corrected section load arrays, `e_flex_nd` per surface,
 jig shape station offsets in metres.
+
+---
+
+## FAR 23 regulatory formulas (deferred — reference specification)
+
+FAR 23 is not implemented in the initial release (Decision 6, Option C). When
+implemented, all FAR 23-specific regulatory formulas will reside in
+`src/far_reg.py` in the support layer.
+
+### Maneuver load factors — FAR 23.337
+
+The limit maneuver load factor depends on aircraft gross weight converted to lbs
+(use `LB_N` from `unit_convert.py`) and category:
+
+| Category | n_max | Constraint | n_min |
+|---|---|---|---|
+| Normal | 2.1 + 24 000 / (w_lb + 10 000) | min 2.5, max 3.8 | −0.4 × n_max |
+| Utility | 4.4 | — | −0.4 × n_max |
+| Acrobatic | 6.0 | — | −0.5 × n_max |
+
+The category must be a field in the condition list (or aircraft config) when FAR
+23 is activated.
+
+### Gust velocities — FAR 23.341
+
+FAR 23.341 uses the same discrete gust method as FAR 25.341(a) with identical
+design gust velocities to the pre-Amendment 25-86 FAR 25 table:
+
+| Altitude | Imperial | SI |
+|---|---|---|
+| Sea level (0 m) | 50 fps EAS | 15.24 m/s EAS |
+| 20 000 ft (6 096 m) | 25 fps EAS | 7.62 m/s EAS |
+
+The gust alleviation factor formula is identical to FAR 25. FAR 23 does **not**
+require continuous turbulence PSD analysis; `maneuver_type ==
+"continuous_turbulence"` is invalid when `cert_basis == "FAR23"`.
+
+### `src/far_reg.py` function signatures (to be implemented)
+
+```python
+def nz_maneuver_far23(m_ac_kg: float, category: str) -> tuple[float, float]:
+    """Return (nz_max_nd, nz_min_nd) per FAR 23.337.
+    category: 'normal' | 'utility' | 'acrobatic'
+    """
+
+
+def u_gust_far23_m_s(h_m: float) -> float:
+    """Return FAR 23.341 design gust velocity (EAS) in m/s at altitude h_m.
+    Policy above 6 096 m governed by APP_CONFIG['gust_velocity_above_20kft'].
+    """
+```

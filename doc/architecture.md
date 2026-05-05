@@ -311,6 +311,7 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `numpy`, `scipy` |
 | `src/unit_convert.py` | nothing |
 | `src/config.py` | stdlib only (`json`, `pathlib`) |
+| `src/far_reg.py` | `unit_convert` only — deferred; module does not yet exist |
 
 No computation module may import from the presentation layer (`ui.py`, `menu.py`,
 `main.py`).
@@ -370,6 +371,59 @@ defined in `doc/aerospace_variables_reference.csv` (`code_variable_name` column)
 For project-specific quantities not in that file, follow the same convention:
 all-lowercase, underscore-separated, SI unit suffix. See `doc/analysis_code.md`
 for the full reference.
+
+---
+
+## FAR 23 provision (deferred to a future release)
+
+Decision 6 (`decision.md §6`) selects Option C: FAR 23 is **not** implemented
+in the initial release. FAR 25 / CS-25 is the sole regulatory basis. The
+architecture is provisioned so that a future FAR 23 implementation requires no
+structural changes to existing modules.
+
+### Extension point 1 — `cert_basis` field in the condition list
+
+A string column `cert_basis` will be added to the condition list CSV
+(`data/conditions/`). Valid values: `"FAR25"` (default; assumed when the column
+is absent) and `"FAR23"`. All existing FAR 25 conditions continue to work
+unchanged because the column is optional and defaults to `"FAR25"`.
+
+### Extension point 2 — `src/far_reg.py` in the support layer
+
+FAR 23-specific regulatory formulas belong in a new **support-layer** module
+`src/far_reg.py`, sitting at the same layer as `src/unit_convert.py` and
+`src/config.py`.
+
+Planned contents:
+- `nz_maneuver_far23(m_ac_kg, category)` — maneuver load factor limits per
+  FAR 23.337 for normal, utility, and acrobatic categories.
+- `u_gust_far23_m_s(h_m)` — design gust velocity as a function of altitude
+  per FAR 23.341.
+
+**Dependency rule:** `src/far_reg.py` may import `src/unit_convert.py` only.
+Computation modules (`maneuver.py`, `gust.py`) may import it. The presentation
+layer must not import it directly. The module does not yet exist; when created,
+the layer diagram and dependency table in this file must be updated.
+
+### Extension point 3 — routing logic in `maneuver.py` and `gust.py`
+
+When `cert_basis == "FAR23"`, `maneuver.py` and `gust.py` will branch to call
+`far_reg.nz_maneuver_far23` and `far_reg.u_gust_far23_m_s` instead of the FAR
+25 design values. The branch guard is a simple `if` on `cert_basis` at the top
+of each relevant calculation block.
+
+FAR 23 does **not** require continuous turbulence PSD analysis. When
+`cert_basis == "FAR23"` and `maneuver_type == "continuous_turbulence"`, the
+program must raise a `ValueError` indicating the case is not applicable under
+FAR 23.
+
+### What is not provisional
+
+The LRA, aero database, mass model, trim solver, and loads summation modules are
+regulation-agnostic by design — no changes to these modules are needed for FAR
+23. The load factor `nz_nd` is already a user-supplied field, so an engineer can
+analyse a GA aircraft today by supplying FAR 23-compliant values manually. Option
+C defers *automated formula enforcement*, not the ability to analyse a GA aircraft.
 
 ---
 

@@ -32,7 +32,9 @@ Outputs:
   per surface.
 * Jig shape determination from the cruise condition.
 
-Load conditions are per FAA/EASA regulations FAR/CS 23 and FAR/CS 25.
+Load conditions are per FAA/EASA regulations FAR/CS 25 (implemented) and FAR/CS
+23 (provisioned; deferred to a future release — see Decision 6, Option C in
+`decision.md §6`).
 
 Analysis methods follow standard industry best practice as documented below.
 
@@ -102,10 +104,20 @@ the regulation sections listed.
 * **Phase 2 (deferred) — dynamic gear model:** spring-damper gear model with
   integrated time history of gear attachment loads and airframe section loads.
 
-## FAR/CS 23 — Normal / Utility / Acrobatic Category
+## FAR/CS 23 — Normal / Utility / Acrobatic Category (deferred)
 
-Loads per FAR 23.301–23.511. Maneuver load factors per FAR 23.337.
-Gust load factors per FAR 23.341. Ground loads per FAR 23.473–23.511.
+> **Not implemented in the initial release.** FAR 23 is deferred to a future
+> release per Decision 6, Option C (`decision.md §6`). The scope below is the
+> specification for that future implementation.
+
+Loads per FAR 23.301–23.511. Maneuver load factors per FAR 23.337. Gust load
+factors per FAR 23.341 (discrete gust only; continuous turbulence PSD is not
+required by FAR 23). Ground loads per FAR 23.473–23.511.
+
+When implemented, FAR 23 conditions will be identified by `cert_basis = "FAR23"`
+in the condition list CSV. Regulatory formula dispatch will occur via
+`src/far_reg.py`. See `doc/architecture.md §FAR 23 provision` and
+`doc/analysis_code.md §FAR 23 regulatory formulas`.
 
 ---
 
@@ -266,6 +278,7 @@ The following are explicitly outside scope:
 
 * CFR 14 FAR Part 25 Subpart C — Loads (transport category)
 * CFR 14 FAR Part 23 Subpart C — Loads (normal/utility/acrobatic category)
+  [Reference only; implementation deferred — Decision 6, Option C]
 * EASA CS-25 Subpart C — equivalent European standard
 
 ## FAA Advisory Circulars
