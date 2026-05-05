@@ -178,11 +178,32 @@ All section loads are in the **structural frame** (x aft, y starboard, z up) and
 | Side load factor | `ny_nd` | dimensionless |
 | Maximum maneuver load factor | `nz_max_nd` | |
 | Minimum maneuver load factor | `nz_min_nd` | |
-| Factor of safety (always 1.5) | module constant `FS = 1.5` | |
-| Ultimate load factor | `nz_ult_nd` | = `nz_nd` × 1.5 |
+| Factor of safety | `fos_nd` | per-condition input from condition list; see note below |
+| Ultimate load factor | `nz_ult_nd` | = `nz_nd` × `fos_nd` |
 
-`FS = 1.5` is a module-level constant in `loads.py`. Never substitute a
-bare literal `1.5` where the factor of safety is applied.
+`fos_nd` is a **per-condition** value supplied in the condition list CSV (column
+`fos`). All outputs from WBT_LOADS are ultimate loads; `fos_nd` is the
+multiplier applied to limit loads to produce them.
+
+**Regulatory basis for `fos_nd` values:**
+
+| `fos_nd` | Regulatory basis | Typical application |
+|---|---|---|
+| 1.5 | FAR/CS 25.303 — standard factor of safety on limit loads | All routine maneuver, gust, and ground conditions |
+| 1.0 | FAR/CS 25.302 — system/structure interaction; load condition already defined as limit = ultimate | Certain failure cases where probability of occurrence makes limit treatment appropriate |
+| Other | FAR/CS 25.302, advisory material | Intermediate values where failure probability falls between the bands above |
+
+FAR 25.302 (CS 25.302 — Interaction of Systems and Structures) requires that
+where a system failure affects structural performance, the required factor of
+safety is a function of: (a) the probability of the failure occurring during a
+single flight, and (b) whether structural failure is expected at the time of
+the system event or only if flight is continued after it. The condition list
+must carry the `fos` column so the analyst can encode these distinctions
+per-condition. When `fos_nd = 1.0`, the condition is a limit load that
+regulations treat as ultimate; no additional multiplication is applied.
+
+Never substitute a bare literal for `fos_nd` inside `loads.py`. Never use a
+module-level constant `FS = 1.5`; read `fos_nd` from the condition row.
 
 ### Gust and ground loads
 
@@ -236,6 +257,7 @@ respective sections above; only the metadata columns are listed here.
 | Load category | `category` | String enum: `maneuver` \| `gust` \| `ground` |
 | Case type | `maneuver_type` | String enum; see `decision.md §1b` for full list |
 | Analysis type | *(CSV subdirectory)* | Determined by which `data/conditions/<type>/` subdirectory the CSV is in; not a column — see `decision.md §9` |
+| Factor of safety | `fos_nd` | Float; per-condition multiplier applied to limit loads to produce ultimate loads. `1.5` for standard FAR 25.303 conditions; `1.0` where regulations define the condition as limit treated as ultimate (e.g. FAR/CS 25.302 failure cases). See §"Load factors and safety factors" for full regulatory basis. |
 
 CSV columns carrying control surface deflections use `_deg` names
 (`elevator_deg`, `aileron_deg`, `rudder_deg`, `flap_deg`, `spoiler_deg`,
@@ -243,6 +265,22 @@ CSV columns carrying control surface deflections use `_deg` names
 variable (`delta_e_rad`, `delta_a_rad`, `delta_r_rad`, `delta_f_rad`,
 `delta_sp_rad`, `delta_stab_rad`) via `DEG_RAD` before passing to any
 computation module.
+
+---
+
+### Flap / high-lift pressure distribution (Category E)
+
+Variables specific to the idealized Pn / Pc method in §e.
+
+| Quantity | Code variable | SI unit | Notes |
+|---|---|---|---|
+| Normal pressure distribution | `pn_pa` | Pa | Chordwise pressure perpendicular to local flap chord; positive into upper surface |
+| Chord pressure distribution | `pc_pa` | Pa | Chordwise pressure parallel to local flap chord; positive aft |
+| Normal load per unit span | `fn_n_m` | N/m | Integral of `pn_pa` over flap chord at one strip station |
+| Chord load per unit span | `fc_n_m` | N/m | Integral of `pc_pa` over flap chord at one strip station |
+| Local flap chord | `c_flap_m` | m | Chord of flap element at strip station (hinge line to trailing edge) |
+| Chordwise fraction (flap-local) | `x_f_nd` | — | 0 at hinge line, 1 at trailing edge |
+| Reference WBT condition | `ref_condition_id` | — | String; `condition_id` of the parent Category A or B case whose section loads define `fn_n_m` and `fc_n_m` |
 
 ---
 
@@ -471,8 +509,13 @@ No time integration is performed.
    until the change in section loads between iterations is below
    `APP_CONFIG["flex_tol"]`.
 
-5. **Limit and ultimate loads** (`loads.py`) — multiply limit loads by `FS = 1.5`
-   to obtain ultimate loads per FAR 25.303.
+5. **Ultimate loads** (`loads.py`) — multiply limit loads by the per-condition
+   `fos_nd` (read from the condition row) to produce ultimate loads.
+   `fos_nd = 1.5` is the standard value per FAR 25.303; `fos_nd = 1.0` applies
+   when regulations define the load condition as limit treated as ultimate (e.g.
+   certain failure cases under FAR/CS 25.302). All WBT_LOADS outputs are ultimate
+   loads; the `fos_nd` value is carried through to the output file alongside
+   the load magnitudes so the derivation is traceable.
 
 **Primary variables:** `nz_nd`, `alpha_rad`, `q_dyn_pa`, `mach_nd`,
 `delta_e_rad`, `cn_sec_nd`, `cm_sec_nd`, `cc_sec_nd`, `vz_n`, `mx_nm`,
@@ -847,26 +890,81 @@ airframe section loads. Critical loads are the extrema over the time history.
 | Limit maneuver load factors with high-lift devices | 25.345(a) |
 | Gust loads with high-lift devices | 25.345(b) |
 
-**Method:** Identical to the static flight loads method (§a) for maneuver cases and
-the discrete gust method (§b2) for gust cases, with the following differences:
+**Method:** Idealized pressure distributions matched to the section loads of a
+referenced parent WBT condition. The parent condition (a Category A or B case
+already solved) provides the integrated normal and chord loads at each strip
+station over the flap span. An idealized chordwise pressure distribution is
+then constructed so that:
 
-1. A non-zero `flap_deg` column in the condition CSV activates the Category E
-   handler. Routing to §e is triggered by `flap_deg > 0`, not by a separate
-   `maneuver_type` value.
-2. The aerodynamic database uses the flap-deployed configuration increment tables
-   (baseline table tag includes the flap configuration; see `doc/loads_aero_db.md`).
-3. The maneuver load factor envelope is limited per FAR 25.345(a): at V_F, n_z
-   must not exceed the value from the condition list (supplied by LOAD_CASE).
-4. Aeroelastic corrections apply to flap-deployed configurations using the same
-   `aeroelastic.py` path as §a.
+- **Pn** (normal load, perpendicular to local chord) integrates over the flap
+  chord to match the parent WBT strip normal load per unit span at that station.
+- **Pc** (chord load, parallel to local chord) integrates over the flap chord to
+  match the parent WBT strip chord load per unit span at that station.
 
-**Supported `maneuver_type` values:** `symmetric_pullup`, `pushover`,
-`high_lift_gust`.
+The induced aeroelastic deflection is taken directly from the parent WBT case
+result (the flexibility-corrected deflected geometry stored in the parent
+condition output). No separate aeroelastic iteration is performed for the flap
+case; the flap loads are applied to the already-deflected shape.
 
-**Primary variables:** `delta_f_rad`, `nz_nd`, `v_eas_m_s`, `u_gust_m_s`,
-plus all §a and §b2 primary variables.
+**Sequence:**
 
-**Modules:** `trim.py` → `aero_db.py` → `loads.py` → `aeroelastic.py`
+1. **Parent WBT case lookup** — the condition list `ref_condition_id` column
+   identifies the parent Category A or B condition. Load the parent case output
+   section loads and aeroelastic deflection from the results cache.
+
+2. **Strip normal and chord loads from parent** — at each spanwise station over
+   the flap extent, extract:
+
+   ```
+   fn_n_m[j]  = vz_n_parent[j] / dy_m[j]    (normal load per unit span, N/m)
+   fc_n_m[j]  = vx_n_parent[j] / dy_m[j]    (chord load per unit span, N/m)
+   ```
+
+3. **Idealized chordwise pressure distribution** — construct Pn and Pc as
+   distributions over the flap chord fraction `x_f` ∈ [0, 1] (0 = flap hinge,
+   1 = trailing edge). The distribution shape (uniform, linear, or user-supplied)
+   is specified in the condition row via `pn_shape` and `pc_shape`. The
+   distributions are scaled so that:
+
+   ```
+   ∫ pn_pa(x_f) dx_f × c_flap_m = fn_n_m[j]
+   ∫ pc_pa(x_f) dx_f × c_flap_m = fc_n_m[j]
+   ```
+
+   where `c_flap_m` is the local flap chord (m). Supported distribution shapes:
+
+   | Shape keyword | Pn / Pc profile | Notes |
+   |---|---|---|
+   | `uniform` | constant across chord | Conservative; default if not specified |
+   | `linear_LE` | linearly decreasing from hinge to TE | Higher loading near hinge |
+   | `linear_TE` | linearly increasing from hinge to TE | Higher loading near TE |
+   | `user` | tabulated in condition CSV columns `pn_x_*` / `pc_x_*` | Analyst-supplied shape |
+
+4. **Section loads summation** (`loads.py`) — integrate the Pn and Pc strip
+   distributions over the flap span to LRA section cuts, producing `vz_n`,
+   `vx_n`, `mx_nm`, `my_nm` at each LRA station. Moment arms are computed to
+   the LRA using the deflected geometry from the parent case.
+
+5. **Ultimate loads** — apply per-condition `fos_nd` from the condition list,
+   identical to all other categories.
+
+**Condition list columns specific to Category E:**
+
+| Column | Code variable | Notes |
+|---|---|---|
+| `ref_condition_id` | `ref_condition_id` | String; `condition_id` of the parent WBT Category A or B case |
+| `flap_chord_m` | `c_flap_m` | Local flap chord (m); may be spanwise-varying via `flap_chord_*` columns |
+| `pn_shape` | `pn_shape` | Distribution shape keyword for Pn; see table above |
+| `pc_shape` | `pc_shape` | Distribution shape keyword for Pc; see table above |
+
+A non-zero `flap_deg` column in the condition CSV activates the Category E
+handler. Routing to §e is triggered by `flap_deg > 0`; `ref_condition_id` is
+then mandatory.
+
+**Primary variables:** `pn_pa`, `pc_pa`, `fn_n_m`, `fc_n_m`, `c_flap_m`,
+`ref_condition_id`, `delta_f_rad`, `vz_n`, `vx_n`, `mx_nm`, `my_nm`
+
+**Modules:** `loads.py` (using parent case output; no trim or aero DB call)
 
 ---
 
@@ -1039,10 +1137,16 @@ cases) and the moment arm to the LRA, then sums to section cuts.
 (`f_gear_n`, tow force, `t_brake_nm`) are added at their attachment points and
 summed to LRA section cuts identically to inertia loads.
 
-Applies `FS = 1.5` to all limit loads to produce ultimate loads per FAR 25.303.
+Applies the per-condition `fos_nd` (passed in the condition state dict, read from
+the condition list CSV `fos` column) to limit loads to produce ultimate loads.
+Standard value is 1.5 per FAR 25.303; values as low as 1.0 are valid for
+conditions defined as limit-treated-as-ultimate under FAR/CS 25.302.
 
 **Output:** `vz_n[i]`, `vx_n[i]`, `fy_n[i]`, `mx_nm[i]`, `my_nm[i]`,
-`mz_nm[i]` at each LRA station `i` — both limit and ultimate.
+`mz_nm[i]` at each LRA station `i`. All output loads are **ultimate**
+(limit × `fos_nd`). The applied `fos_nd` is carried through the output dict
+alongside the load arrays so the multiplier is traceable in reports and NASTRAN
+cards.
 
 ---
 

@@ -121,7 +121,7 @@ Product moment of area,Ixy,i_xy_m4,m⁴,m⁴,in⁴,Signed; zero for doubly-symme
 Polar moment of area,J,j_m4,m⁴,m⁴,in⁴,Always positive,Stress,Megson §18.1
 Cross-sectional area,A_cs,a_cs_m2,m²,m²,in²,Always positive,Stress,Megson §1.4
 Stress concentration factor,Kt,k_t_nd,-,-,-,≥ 1 (ratio of peak to nominal stress),Stress,Peterson Stress Concentration Factors
-Factor of safety,FoS,fos_nd,-,-,-,≥ 1.0 required; ≥ 1.5 ultimate (FAR 25.303),Stress / Loads,FAR 25.303 / Lomax §2.3
+Factor of safety,FoS,fos_nd,-,-,-,≥ 1.0; per-condition input: 1.5 standard (FAR 25.303); 1.0 where limit treated as ultimate (FAR/CS 25.302 system-structure interaction failure cases),Stress / Loads,FAR 25.303 / FAR 25.302 / Lomax §2.3
 Margin of safety,MS,ms_nd,-,-,-,≥ 0 required (MS = FoS − 1),Stress / Loads,Lomax §2.3
 Reserve factor,RF,rf_nd,-,-,-,≥ 1.0 required (RF = allowable / applied),Stress / Loads,Lomax §2.3
 True airspeed,TAS,v_tas_m_s,kts,m/s,kts,Positive forward; actual speed of aircraft relative to undisturbed air mass,Aerodynamics / Loads / S&C,Anderson §1.8 / ICAO Annex 2
@@ -150,3 +150,9 @@ Ground turn radius,R_turn,r_turn_m,m,m,ft,Always positive; radius of circular ta
 Gear normal reaction,N_gear,n_gear_n,N,N,lbf,Always positive; vertical contact force at individual gear attachment,Loads,FAR 25.479
 Brake torque,Q_brake,t_brake_nm,N·m,N·m,ft·lbf,Positive in drag direction (opposing wheel rotation); braking moment at wheel axle,Loads,FAR 25.493
 Brake friction coefficient,mu_brake,mu_brake_nd,-,-,-,Positive; ratio of brake force to normal reaction; typically 0.80 dry runway per FAR 25.493,Loads,FAR 25.493
+Normal pressure distribution (flap),Pn,pn_pa,Pa,Pa,psf,Positive into upper surface (suction side); perpendicular to local flap chord line,Flap Loads,FAR 25.345 / Lomax §6
+Chord pressure distribution (flap),Pc,pc_pa,Pa,Pa,psf,Positive aft (trailing-edge direction); parallel to local flap chord line,Flap Loads,FAR 25.345 / Lomax §6
+Normal load per unit span (flap),Fn,fn_n_m,N/m,N/m,lbf/in,Positive upward (same sense as lift); integral of pn_pa over flap chord at one strip station,Flap Loads,FAR 25.345
+Chord load per unit span (flap),Fc,fc_n_m,N/m,N/m,lbf/in,Positive aft (drag direction); integral of pc_pa over flap chord at one strip station,Flap Loads,FAR 25.345
+Local flap chord,c_flap,c_flap_m,m,m,ft,Always positive; chord of flap element from hinge line to trailing edge,Flap Loads,FAR 25.345
+Chordwise fraction (flap-local),x_f,x_f_nd,-,-,-,0 at hinge line; 1 at trailing edge,Flap Loads,FAR 25.345
