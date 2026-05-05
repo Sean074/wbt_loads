@@ -40,8 +40,10 @@ and why the structure is organised the way it is.
 │  src/trim.py        — trim solver                  │
 │  src/maneuver.py    — maneuver time history        │
 │  src/gust.py        — discrete & continuous gust loads │
+│  src/ground.py      — static & dynamic ground loads│
 │  src/loads.py       — loads summation to LRA/grid  │
 │  src/aeroelastic.py — aeroelastic corrections      │
+│  src/beam.py        — sbeam BDF + modal ROM        │
 │  src/lra.py         — loads reference axis + grid  │
 └──────────────────────┬─────────────────────────────┘
                        │ uses
@@ -89,8 +91,10 @@ wbt_loads/
 │   ├── trim.py              # Computation — trim solver
 │   ├── maneuver.py          # Computation — maneuver time history
 │   ├── gust.py              # Computation — discrete & continuous gust loads
+│   ├── ground.py            # Computation — static & dynamic ground loads
 │   ├── loads.py             # Computation — loads summation to LRA/grid points
 │   ├── aeroelastic.py       # Computation — aeroelastic corrections + jig shape
+│   ├── beam.py              # Computation — sbeam BDF parser + modal ROM
 │   ├── lra.py               # Data model — loads reference axis and grid
 │   ├── nastran_out.py       # Output — NASTRAN FORCE/MOMENT card writer
 │   ├── unit_convert.py      # Support — conversion constants only
@@ -285,6 +289,69 @@ Phase 2 deferred paths (1-cosine TDG, DLM-based PSD FRFs) will be added here.
 
 ---
 
+### `src/ground.py` — Ground loads
+
+Computes quasi-static ground loads for Categories C (Static Ground Loads) and
+D (Dynamic Ground Loads). No aerodynamic loads; no time integration. All methods
+are quasi-static in Phase 1. Provides three public functions:
+
+- `compute_static_ground_loads` — Category C ground handling cases
+  (braked roll, ground turn, nose-wheel yaw, towing, pivoting, jacking).
+  Applies `nx_nd`, `ny_nd` inertia reactions and any applied external forces
+  (brake torque, tow load, centrifugal) at their attachment points.
+
+- `compute_landing_loads` — Category D.1 landing sub-cases (level, tail-down,
+  one-gear, lateral drift, rebound). Uses the FAR 25.473 quasi-static reserve
+  energy formula to compute the peak gear reaction from `v_sink_m_s`,
+  `d_stroke_m`, and `eta_gear_nd`.
+
+- `compute_taxi_braking_loads` — Category D.2 taxi/braking sub-cases (taxi bump,
+  rough runway, abrupt braking). Reads `nz_bump_nd` or `nx_nd` directly from
+  the condition row.
+
+All three functions return a state dict with keys `applied_forces_n`,
+`attach_positions_m`, `nz_nd`, `nx_nd`, `ny_nd`, and `condition_id`. The caller
+(`menu.py`) passes this dict to `loads.compute_ground_loads()` for LRA summation.
+
+**Allowed to import:** `mass_model`, `lra`, `numpy`, `unit_convert`, `config`
+
+**Must not import:** `aero_db`, `trim`, `maneuver`, `gust`, `loads`, `aeroelastic`,
+`beam` — the no-import of `aero_db` and `trim` enforces that ground cases carry
+no aerodynamic contribution.
+
+---
+
+### `src/beam.py` — Beam model and modal ROM
+
+Interfaces with the `sbeam` library (installed editable from
+`/Users/seanomeara/Documents/99-Tests/sbeam`) to provide the structural
+flexibility model needed by `aeroelastic.py`. Owns all beam-model I/O and
+structural dynamics computation.
+
+Three-step API:
+
+1. **Parse** — `sbeam.parser.bdf_reader.parse_bdf(path)` reads the BDF file
+   into a `BulkData` object. Imperial BDFs are converted to SI at ingestion
+   via `unit_convert.py` before any assembler is called.
+
+2. **Assemble** — `sbeam.assembly.stiffness.assemble_global_stiffness(bulk)` → K
+   and `sbeam.assembly.mass_matrix.assemble_global_mass(bulk)` → M.
+
+3. **Modal solve** — `sbeam.solver.sol103.solve(bulk, case_control)` →
+   `Sol103Result` with `mode_shapes` Φ, `eigenvalues` ω², `frequencies_hz`.
+   Forms the modal-reduced system: K_modal = diag(ω²), M_modal = I,
+   D_modal = diag(2ζᵢωᵢ).
+
+Exposes `get_K()`, `get_M()`, and `get_flexibility()` for use by
+`aeroelastic.py`. The modal truncated flexibility matrix is
+F_flex = Φ Λ⁻¹ Φᵀ where Λ = diag(ω²).
+
+**Allowed to import:** `sbeam`, `numpy`, `scipy`, `unit_convert`, `config`
+
+**Must not contain:** display logic.
+
+---
+
 ### `src/loads.py` — Loads summation
 
 Sums aerodynamic strip loads and inertia loads to the LRA and grid reporting
@@ -355,8 +422,10 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | `src/trim.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/maneuver.py` | `aero_db`, `mass_model`, `lra`, `trim`, `numpy`, `scipy`, `unit_convert` |
 | `src/gust.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
+| `src/ground.py` | `mass_model`, `lra`, `numpy`, `unit_convert`, `config` |
 | `src/loads.py` | `aero_db`, `mass_model`, `lra`, `unit_convert` |
 | `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `numpy`, `scipy` |
+| `src/beam.py` | `sbeam`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/unit_convert.py` | nothing |
 | `src/config.py` | stdlib only (`json`, `pathlib`) |
 | `src/nastran_out.py` | `lra`, `unit_convert`, stdlib only |
@@ -386,7 +455,10 @@ condition.load_conditions(csv_path, analysis_type)
         │
         ▼
 menu.py handler iterates over all condition rows in the DataFrame:
-  ├── trim.py         ← solve balanced flight state (flight loads only)
+  ├── (flight loads) trim.py / maneuver.py / gust.py
+  │       ← solve flight state for the analysis sub-category
+  ├── (ground loads) ground.py
+  │       ← compute quasi-static ground reactions (Categories C, D)
   ├── loads.py        ← sum aero + inertia + applied loads to LRA/grid
   ├── nastran_out.py  ← write FORCE/MOMENT cards to data/outputs/
   └── (loop continues for next condition)
@@ -411,6 +483,40 @@ menu.py handler
         ├── lra.py    ← resolve positions on LRA
         └── scipy     ← apply influence coefficient matrix
 ```
+
+### Analysis sub-category routing
+
+Each analysis category dispatches to computation modules based on
+`maneuver_type`. The full routing table is:
+
+| Sub-category | `maneuver_type` values | Computation path |
+|---|---|---|
+| A.1 Longitudinal – Balanced | `symmetric_pullup`, `pushover` | `trim` → `loads.compute_flight_loads` |
+| A.2 Longitudinal – Maneuver | `checked` | `maneuver` ODE → `loads.compute_flight_loads` |
+| A.3 Lateral – Balanced | *(see known limitation)* | `trim` → `loads.compute_flight_loads` |
+| A.4 Lateral – Maneuver | `rolling_pullout`, `yaw` | `maneuver` ODE → `loads.compute_flight_loads` |
+| B.1 PSD turbulence | `continuous_turbulence` | `gust` (2-DOF FRF) → `loads.compute_flight_loads` |
+| B.2 Discrete gust | `discrete_gust_vertical`, `discrete_gust_lateral` | `gust` (static equiv.) → `loads.compute_flight_loads` |
+| C SGL | `braked_roll`, `ground_turn`, `nose_wheel_yaw`, `towing`, `pivoting`, `jacking` | `ground.compute_static_ground_loads` → `loads.compute_ground_loads` |
+| D.1 Landing | `level_landing`, `tail_down_landing`, `one_gear_landing`, `lateral_drift`, `rebound_landing` | `ground.compute_landing_loads` → `loads.compute_ground_loads` |
+| D.2 Taxi/Braking | `taxi_bump`, `rough_runway`, `abrupt_braking` | `ground.compute_taxi_braking_loads` → `loads.compute_ground_loads` |
+| E FLAPS maneuver | `symmetric_pullup`, `pushover` | `trim` → `loads.compute_flight_loads` (flap tables active) |
+| E FLAPS gust | `high_lift_gust` | `gust` → `loads.compute_flight_loads` (flap tables active) |
+| F CONTROLS | *(all)* | deferred — `_handle_controls_deferred` raises `NotImplementedError` |
+
+The `menu.py` top-level handler dict and per-category dispatch dicts are the
+single authoritative routing implementation; they must match this table exactly.
+The TUI abbreviations (SFL, DFL, SGL, DGL, FLAPS, CONTROLS) are defined in
+`CATEGORY_LABELS` in `ui.py` and `CATEGORY_FILE_PREFIX` in `nastran_out.py`.
+
+### Known Phase 1 limitation — A.3 static lateral balanced
+
+`maneuver_type = "yaw"` routes to the maneuver ODE path (A.4 dynamic) in Phase 1.
+A true static lateral balanced trim case (A.3 — steady sideslip equilibrium)
+requires a new `maneuver_type = "balanced_lateral"` value, deferred to Phase 2.
+See `decision.md §11` for the engineering workaround.
+
+---
 
 Downstream (external — not part of this application):
 
@@ -555,7 +661,9 @@ C defers *automated formula enforcement*, not the ability to analyse a GA aircra
 ## Adding new features
 
 **New load case or maneuver type:**
-Add to `maneuver.py` if time-history based, or to `loads.py` for static cases.
+Add to `maneuver.py` if time-history based; to `gust.py` for gust/turbulence
+cases; to `ground.py` for ground handling or landing cases; or to `loads.py`
+for other static cases.
 Add the new `maneuver_type` value to the enumeration in `decision.md §1b` and to
 the appropriate per-type CSV schema in `decision.md §9`. Update `condition.py`
 to validate the new column if type-specific columns are added. Add a menu handler

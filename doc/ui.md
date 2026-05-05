@@ -213,6 +213,34 @@ with their names; Category F is labelled `"(Phase 2 — deferred)"` and is not
 selectable until Phase 2. Returns the single-letter category ID (`"A"` through
 `"E"`).
 
+The module-level dict `CATEGORY_LABELS` in `ui.py` is the **canonical source**
+for all TUI menu label strings; do not duplicate these strings elsewhere:
+
+```python
+CATEGORY_LABELS = {
+    "A": "Static Flight Loads (SFL)",
+    "B": "Dynamic Flight Loads (DFL)",
+    "C": "Static Ground Loads (SGL)",
+    "D": "Dynamic Ground Loads (DGL)",
+    "E": "Flap / High-Lift Loads (FLAPS)",
+    "F": "Control Surface Loads (CONTROLS) — Phase 2 — deferred",
+}
+```
+
+The module-level dict `CATEGORY_SUBDIR` maps category IDs to the
+`data/conditions/` subdirectory name used by `select_condition_csv`:
+
+```python
+CATEGORY_SUBDIR = {
+    "A": "static_flight",
+    "B": "dynamic_flight",
+    "C": "static_ground",
+    "D": "dynamic_ground",
+    "E": "flap",
+    "F": "control_surface",
+}
+```
+
 **`select_condition_csv(analysis_type)`** — lists CSV files found in
 `data/conditions/<type>/` where `<type>` is the subdirectory name for the
 selected category (e.g. `static_flight`, `dynamic_flight`). Returns the resolved

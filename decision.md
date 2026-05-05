@@ -95,8 +95,13 @@ radians at ingestion in `condition.py`.
 | `tail_down_landing` | `ground` | FAR 25.481 |
 | `one_gear_landing` | `ground` | FAR 25.483 |
 | `lateral_drift` | `ground` | FAR 25.485 |
+| `rebound_landing` | `ground` | FAR 25.487 |
 | `braked_roll` | `ground` | FAR 25.493 |
 | `ground_turn` | `ground` | FAR 25.495 |
+| `nose_wheel_yaw` | `ground` | FAR 25.499 |
+| `towing` | `ground` | FAR 25.509 |
+| `pivoting` | `ground` | FAR 25.503 |
+| `jacking` | `ground` | FAR 25.519 |
 | `taxi_bump` | `ground` | FAR 25.491 |
 | `rough_runway` | `ground` | FAR 25.491 |
 | `abrupt_braking` | `ground` | FAR 25.493 / 25.507 |
@@ -560,14 +565,14 @@ restarting the program.
 
 #### Analysis type categories
 
-| ID | Name | Regulatory basis | CSV subdirectory |
-|---|---|---|---|
-| A | Static Flight Loads (balanced maneuver) | FAR 25.331, 25.337, 25.349, 25.351 | `data/conditions/static_flight/` |
-| B | Dynamic Flight Loads (PSD, TDG) | FAR 25.341(a) and 25.341(b) | `data/conditions/dynamic_flight/` |
-| C | Static Ground Loads | FAR 25.489–25.519 (quasi-static) | `data/conditions/static_ground/` |
-| D | Dynamic Ground Loads | FAR 25.473–25.487, 25.491 | `data/conditions/dynamic_ground/` |
-| E | Flap / High-Lift Loads | FAR 25.345 | `data/conditions/flap/` |
-| F | Control Surface Loads | FAR 25.395–25.415 | `data/conditions/control_surface/` |
+| ID | Name | TUI label | Regulatory basis | CSV subdirectory |
+|---|---|---|---|---|
+| A | Static Flight Loads (balanced maneuver) | SFL | FAR 25.331, 25.337, 25.349, 25.351 | `data/conditions/static_flight/` |
+| B | Dynamic Flight Loads (PSD, TDG) | DFL | FAR 25.341(a) and 25.341(b) | `data/conditions/dynamic_flight/` |
+| C | Static Ground Loads | SGL | FAR 25.489–25.519 (quasi-static) | `data/conditions/static_ground/` |
+| D | Dynamic Ground Loads | DGL | FAR 25.473–25.487, 25.491 | `data/conditions/dynamic_ground/` |
+| E | Flap / High-Lift Loads | FLAPS | FAR 25.345 | `data/conditions/flap/` |
+| F | Control Surface Loads | CONTROLS | FAR 25.395–25.415 | `data/conditions/control_surface/` |
 
 Category F is **deferred to Phase 2**. The subdirectory slot is reserved; no CSV
 schema or analysis code is defined in Phase 1. When implemented, Category F covers
@@ -736,7 +741,182 @@ Ground loads go in `loads.py` (already handles static load summation).
 Condition parsing goes in `config.py` or a new thin loader.
 Envelope accumulation goes in `loads.py` or a helper in `menu.py`.
 
-**Direction:** [ ]
+**Direction:** [x]
+
+**Option A — Dedicated modules.** The following modules are the authoritative
+homes for each analysis domain:
+
+| New/confirmed module | Analysis domain | Categories handled |
+|---|---|---|
+| `src/gust.py` | Discrete gust + continuous PSD turbulence | B.1 PSD, B.2 TDG |
+| `src/ground.py` | Quasi-static ground handling + landing | C (SGL), D.1 Landing, D.2 Taxi/Braking |
+| `src/condition.py` | Condition CSV parser for all six analysis types | A–F |
+
+No `envelope.py` module is created. Load envelope selection remains the sole
+responsibility of CRITIC_LOADS (Decision 7). No per-analysis-type split of
+`gust.py` or `ground.py` is warranted in Phase 1; sub-categories (B.1 / B.2,
+D.1 / D.2) are internal dispatch within those modules.
+
+**Refined analysis sub-category hierarchy:**
+
+```
+A  Static Flight Loads   (SFL)
+   A.1  Longitudinal – Balanced    symmetric_pullup, pushover        → trim + loads
+   A.2  Longitudinal – Maneuver    checked                           → maneuver ODE
+   A.3  Lateral – Balanced         (static yaw equilibrium)          → trim + loads (Phase 1)
+   A.4  Lateral – Maneuver         rolling_pullout, yaw              → maneuver ODE
+
+B  Dynamic Flight Loads  (DFL)
+   B.1  PSD   continuous_turbulence                                  → gust.py (2-DOF FRF)
+   B.2  TDG   discrete_gust_vertical, discrete_gust_lateral         → gust.py (static equiv.)
+
+C  Static Ground Loads   (SGL)
+   braked_roll, ground_turn, nose_wheel_yaw, towing, pivoting, jacking → ground.py
+
+D  Dynamic Ground Loads  (DGL)
+   D.1  Landing    level_landing, tail_down_landing, one_gear_landing,
+                   lateral_drift, rebound_landing                    → ground.py
+   D.2  Taxi       taxi_bump, rough_runway, abrupt_braking           → ground.py
+
+E  Flap / High-Lift Loads (FLAPS)
+   symmetric_pullup, pushover                                        → trim + loads
+   high_lift_gust                                                    → gust.py
+
+F  Control Surface Loads (CONTROLS) — Phase 2, deferred
+```
+
+**`src/ground.py` design:**
+
+Allowed imports: `mass_model`, `lra`, `numpy`, `unit_convert`, `config`.
+Must NOT import: `aero_db`, `trim`, `maneuver`, `gust`, `loads`, `aeroelastic`, `beam`.
+
+Public functions:
+
+```python
+def compute_static_ground_loads(
+    condition_row: pd.Series,
+    mass_df: pd.DataFrame,
+    lra_stations: list,
+    app_config: dict,
+) -> dict:
+    """Category C (SGL): braked_roll, ground_turn, nose_wheel_yaw, towing,
+    pivoting, jacking.  Returns dict with applied_forces_n,
+    attach_positions_m, nz_nd, nx_nd, ny_nd, condition_id.
+    """
+
+def compute_landing_loads(
+    condition_row: pd.Series,
+    mass_df: pd.DataFrame,
+    lra_stations: list,
+    app_config: dict,
+) -> dict:
+    """Category D.1 (DGL): level_landing, tail_down_landing, one_gear_landing,
+    lateral_drift, rebound_landing.
+    FAR 25.473 peak gear reaction (Phase 1):
+        f_gear_n = w_aircraft_n * eta_gear_nd
+                   * (1 + v_sink_m_s**2 / (2 * G_M_S2 * d_stroke_m))
+        nz_eff_nd = f_gear_n / w_aircraft_n
+    """
+
+def compute_taxi_braking_loads(
+    condition_row: pd.Series,
+    mass_df: pd.DataFrame,
+    lra_stations: list,
+    app_config: dict,
+) -> dict:
+    """Category D.2 (DGL): taxi_bump, rough_runway, abrupt_braking.
+    Reads nz_bump_nd / nx_nd directly from condition_row.
+    """
+```
+
+Private helper shared by all three functions:
+
+```python
+def _apply_ground_inertia(
+    m_ac_kg: float, nx_nd: float, ny_nd: float, nz_nd: float,
+    mass_df: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Inertia force vectors for all CONM2 mass points in structural frame.
+    Returns (forces_n, positions_m) for passing to loads.compute_ground_loads.
+    """
+```
+
+**`src/loads.py` extension:**
+
+A second public function is added to `loads.py` (no new imports required):
+
+```python
+def compute_ground_loads(ground_state: dict, lra_stations: list) -> np.ndarray:
+    """Sum applied_forces_n at attach_positions_m to LRA section cuts.
+    Returns (N_stations, 6) array [vz_n, vx_n, fy_n, mx_nm, my_nm, mz_nm].
+    No aero contribution; all load comes from the ground_state dict.
+    """
+```
+
+**`src/menu.py` dispatch structure:**
+
+The top-level category handlers and per-category `maneuver_type` dispatch dicts
+are the authoritative routing table for all analysis sub-categories:
+
+```python
+CATEGORY_HANDLERS = {
+    "A": _handle_static_flight,   "B": _handle_dynamic_flight,
+    "C": _handle_static_ground,   "D": _handle_dynamic_ground,
+    "E": _handle_flap_loads,      "F": _handle_controls_deferred,
+}
+
+_SFL_DISPATCH = {
+    "symmetric_pullup": _run_trim_and_loads,  # A.1
+    "pushover":         _run_trim_and_loads,  # A.1
+    "checked":          _run_maneuver_ode,    # A.2
+    "rolling_pullout":  _run_maneuver_ode,    # A.4
+    "yaw":              _run_maneuver_ode,    # A.4 (see known limitation below)
+}
+_DFL_DISPATCH = {
+    "continuous_turbulence":   _run_gust,   # B.1
+    "discrete_gust_vertical":  _run_gust,   # B.2
+    "discrete_gust_lateral":   _run_gust,   # B.2
+}
+_SGL_DISPATCH = {mt: _run_static_ground
+    for mt in ("braked_roll","ground_turn","nose_wheel_yaw","towing","pivoting","jacking")}
+_DGL_DISPATCH = {
+    "level_landing":      _run_landing,  # D.1
+    "tail_down_landing":  _run_landing,
+    "one_gear_landing":   _run_landing,
+    "lateral_drift":      _run_landing,
+    "rebound_landing":    _run_landing,
+    "taxi_bump":          _run_taxi,     # D.2
+    "rough_runway":       _run_taxi,
+    "abrupt_braking":     _run_taxi,
+}
+_FLAP_DISPATCH = {
+    "symmetric_pullup": _run_trim_and_loads,
+    "pushover":         _run_trim_and_loads,
+    "high_lift_gust":   _run_gust,
+}
+```
+
+**Category abbreviations:**
+
+| Context | Rule |
+|---|---|
+| TUI menu labels (`ui.py`) | Full name + (ABBR) in `CATEGORY_LABELS` dict |
+| Output filename prefix (`nastran_out.py`) | Abbreviation in `CATEGORY_FILE_PREFIX` dict |
+| `data/conditions/` subdirectory names | Full descriptive name — fixed from Decision 9 |
+| Python identifiers | Descriptive snake_case; no abbreviations |
+
+Output filename convention (also resolves Decision 26):
+`<aircraft_id>_<TYPE_ABBR>_<condition_id>_<surface>_<YYYYMMDD>_rev<nn>.bdf`
+Example: `B737_SGL_C001_wing_20260504_rev01.bdf`
+
+**Known Phase 1 limitation — A.3 Lateral Balanced:**
+
+The `maneuver_type = "yaw"` value routes to the maneuver ODE path (A.4 dynamic)
+in Phase 1. A true static lateral balanced trim case (A.3 — steady sideslip
+equilibrium) requires a new `maneuver_type = "balanced_lateral"` value, deferred
+to Phase 2. Engineers needing A.3 in Phase 1 should supply the balanced lateral
+loads directly as a `symmetric_pullup` condition with the lateral load factors
+set via `nx_nd` / `ny_nd` in the condition list.
 
 ---
 

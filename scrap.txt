@@ -38,3 +38,5 @@ E. Flap Loads (FLAPS)
 F. Control Surface Loads (CONTROLS)
 
 Suggest a structure for src and a proposed file structure and naming convention. Review the updates required to documentation.
+
+# TODO DECISION 10

@@ -138,3 +138,15 @@ Out-of-plane bending moment at LRA cut,Mx,mx_nm,N·m,N·m,ft·lbf,Positive when 
 Torsional moment at LRA cut,My,my_nm,N·m,N·m,ft·lbf,Positive leading-edge UP (nose-up twist); RHR about +y_starboard: +z toward +x rotation carries LE at (−x) upward (+z); Lomax §5 positive torsion,Loads,Lomax §5.3
 In-plane bending moment at LRA cut,Mz,mz_nm,N·m,N·m,ft·lbf,Positive when section bends toward aft (+x structural frame); computed from in-plane (drag-direction) loading; Lomax §5,Loads,Lomax §5.2
 Spanwise coordinate (normalised),eta,eta_nd,-,-,-,Positive starboard; eta = y_m / s_m; 0 at root (BL 0); 1.0 at right wingtip; follows structural y convention,Loads / Aerodynamics,Standard aeronautical convention
+Design sink rate,V_sink,v_sink_m_s,m/s,m/s,ft/s,Positive downward (magnitude of descent speed at contact),Loads,FAR 25.473 / Lomax §6.2
+Available gear stroke,d_stroke,d_stroke_m,m,m,ft,Always positive (total available stroke from ground to limit),Loads,FAR 25.473 / Decision 3
+Gear absorption efficiency,eta_gear,eta_gear_nd,-,-,-,0 < eta_gear <= 1; typically 0.80 per FAR 25.473(b),Loads,FAR 25.473(b)
+Peak gear reaction,F_gear,f_gear_n,N,N,lbf,Always positive; vertical force at gear attachment point at peak of reserve energy stroke,Loads,FAR 25.473 / Lomax §6.2
+Effective landing load factor,nz_eff,nz_eff_nd,-,-,-,Positive upward; = f_gear_n / w_aircraft_n; applied as quasi-static vertical load factor,Loads,FAR 25.473 / Decision 3
+Tail-down contact attitude,alpha_td,alpha_td_rad,deg,rad,deg,Positive nose-up; aircraft pitch attitude at which tail structure first contacts runway in tail-down landing,Loads,FAR 25.481
+Vertical bump load factor,nz_bump,nz_bump_nd,-,-,-,Positive upward; applied bump load factor for taxi bump and rough runway conditions,Loads,FAR 25.491 / Decision 9
+Ground speed,V_g,v_ground_m_s,m/s,m/s,kts,Positive forward; aircraft ground speed during taxi or ground roll,Loads,FAR 25.495
+Ground turn radius,R_turn,r_turn_m,m,m,ft,Always positive; radius of circular taxi turn path,Loads,FAR 25.495
+Gear normal reaction,N_gear,n_gear_n,N,N,lbf,Always positive; vertical contact force at individual gear attachment,Loads,FAR 25.479
+Brake torque,Q_brake,t_brake_nm,N·m,N·m,ft·lbf,Positive in drag direction (opposing wheel rotation); braking moment at wheel axle,Loads,FAR 25.493
+Brake friction coefficient,mu_brake,mu_brake_nd,-,-,-,Positive; ratio of brake force to normal reaction; typically 0.80 dry runway per FAR 25.493,Loads,FAR 25.493

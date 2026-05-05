@@ -1,8 +1,8 @@
 # Analysis Code Standards — Variable Naming and Methods
 
 Applies to all computation modules: `aero_db.py`, `mass_model.py`, `lra.py`,
-`trim.py`, `maneuver.py`, `loads.py`, `aeroelastic.py`, and any helper functions
-called from them. UI and menu code is excluded.
+`trim.py`, `maneuver.py`, `gust.py`, `ground.py`, `loads.py`, `aeroelastic.py`,
+`beam.py`, and any helper functions called from them. UI and menu code is excluded.
 
 ---
 
@@ -192,6 +192,11 @@ bare literal `1.5` where the factor of safety is applied.
 | Gust gradient distance | `h_gust_m` | gradient, m (not altitude) |
 | Gust alleviation factor | `k_gust_nd` | dimensionless |
 | Design sink rate | `v_sink_m_s` | m/s |
+| Available gear stroke | `d_stroke_m` | m; from gear design data or condition input |
+| Gear absorption efficiency | `eta_gear_nd` | dimensionless; typically 0.80 per FAR 25.473(b) |
+| Peak gear reaction | `f_gear_n` | N; result of FAR 25.473 reserve energy formula |
+| Effective load factor (landing) | `nz_eff_nd` | dimensionless; = `f_gear_n / w_aircraft_n` |
+| Tail-down contact attitude | `alpha_td_rad` | rad; aircraft attitude when tail contacts runway |
 | Ground speed | `v_ground_m_s` | m/s |
 | Ground turn radius | `r_turn_m` | m |
 | Gear normal load | `n_gear_n` | N at contact point |
@@ -360,14 +365,14 @@ Six analysis method categories map to the six TUI analysis types from
 `decision.md §9`. The same aerodynamic database, mass model, and LRA
 infrastructure support all categories. Each is described below.
 
-| TUI Category | Analysis method section | Phase |
-|---|---|---|
-| A — Static Flight Loads | §a | 1 |
-| B — Dynamic Flight Loads | §b | 1 (PSD); 2 (TDG) |
-| C — Static Ground Loads | §c | 1 |
-| D — Dynamic Ground Loads | §d | 1 (quasi-static); 2 (dynamic gear) |
-| E — Flap / High-Lift Loads | §e | 1 |
-| F — Control Surface Loads | §f | 2 (deferred) |
+| TUI Category | TUI label | Sub-categories | Analysis method section | Phase |
+|---|---|---|---|---|
+| A — Static Flight Loads | SFL | A.1 Longitudinal – Balanced, A.2 Longitudinal – Maneuver, A.3 Lateral – Balanced, A.4 Lateral – Maneuver | §a | 1 |
+| B — Dynamic Flight Loads | DFL | B.1 PSD (continuous turbulence), B.2 TDG (discrete gust) | §b | 1 (both Phase 1 simplified); 2 (DLM, 1-cosine TDG) |
+| C — Static Ground Loads | SGL | — | §c | 1 |
+| D — Dynamic Ground Loads | DGL | D.1 Landing, D.2 Taxi/Braking | §d | 1 (quasi-static); 2 (dynamic gear) |
+| E — Flap / High-Lift Loads | FLAPS | — | §e | 1 |
+| F — Control Surface Loads | CONTROLS | — | §f | 2 (deferred) |
 
 All equations use SI quantities throughout.
 
@@ -735,7 +740,7 @@ condition list; typical value 0.80 for dry runway per FAR 25.493.
 **Primary variables:** `nx_nd`, `ny_nd`, `t_brake_nm`, `mu_brake_nd`,
 `v_ground_m_s`, `r_turn_m`, `n_gear_n`
 
-**Modules:** `ground.py` (TBD — see decision.md §11) → `mass_model.py` → `loads.py`
+**Modules:** `ground.py` → `mass_model.py` → `loads.py`
 
 ---
 
@@ -828,7 +833,7 @@ airframe section loads. Critical loads are the extrema over the time history.
 **Primary variables:** `v_sink_m_s`, `d_stroke_m`, `eta_gear_nd`, `nz_eff_nd`,
 `f_gear_n`, `alpha_td_rad`, `k_gear_n_m`, `c_gear_ns_m`, `nx_nd`, `ny_nd`
 
-**Modules:** `ground.py` (TBD — see decision.md §11) → `mass_model.py` → `loads.py`
+**Modules:** `ground.py` → `mass_model.py` → `loads.py`
 
 ---
 
@@ -972,6 +977,48 @@ checked maneuver, rolling pull-out, yaw maneuver.
 **Output:** time array `t_s[k]` and section load arrays `vz_n[i,k]`,
 `mx_nm[i,k]`, etc., at each LRA station `i` and time step `k`. Critical
 instant per load component extracted by `argmax`/`argmin` over the time axis.
+
+---
+
+### `ground.py` — Ground loads
+
+Used by: static ground loads (§c) and dynamic ground and landing loads (§d).
+No aerodynamic contribution; no time integration. All Phase 1 methods are
+quasi-static.
+
+**Allowed to import:** `mass_model`, `lra`, `numpy`, `unit_convert`, `config`
+
+**Key functions:**
+
+| Function | Category | Supported `maneuver_type` values |
+|---|---|---|
+| `compute_static_ground_loads` | C (SGL) | `braked_roll`, `ground_turn`, `nose_wheel_yaw`, `towing`, `pivoting`, `jacking` |
+| `compute_landing_loads` | D.1 (DGL) | `level_landing`, `tail_down_landing`, `one_gear_landing`, `lateral_drift`, `rebound_landing` |
+| `compute_taxi_braking_loads` | D.2 (DGL) | `taxi_bump`, `rough_runway`, `abrupt_braking` |
+
+**Return value** (all three functions): a state dict with keys:
+- `applied_forces_n` — ndarray (n_attach, 3), applied force vectors in structural frame
+- `attach_positions_m` — ndarray (n_attach, 3), attachment point positions
+- `nz_nd`, `nx_nd`, `ny_nd` — effective load factors at CG
+- `condition_id` — string, passed through from `condition_row`
+
+The caller (`menu.py`) passes this dict to `loads.compute_ground_loads()`.
+
+**Private helper:**
+
+`_apply_ground_inertia(m_ac_kg, nx_nd, ny_nd, nz_nd, mass_df)` — returns
+`(forces_n, positions_m)` inertia force arrays for all CONM2 mass points.
+
+**FAR 25.473 peak gear reaction (used in `compute_landing_loads`):**
+
+```python
+f_gear_n = w_aircraft_n * eta_gear_nd * (1 + v_sink_m_s**2 / (2 * G_M_S2 * d_stroke_m))
+nz_eff_nd = f_gear_n / w_aircraft_n
+```
+
+All quantities are SI; `G_M_S2 = 9.80665` is the module-level physics constant.
+If `v_sink_m_s` arrives in fps (from a legacy input file), convert at ingestion
+using `FPS_M_S` from `unit_convert.py` before this formula.
 
 ---
 
