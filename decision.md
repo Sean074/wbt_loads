@@ -480,19 +480,33 @@ team and are external to WBT_LOADS.
 
 ---
 
-## 8. Output Units — US Customary Only or Optional SI
+## 8. Output Units — SI Standard with Optional US Customary Display
 
-The analysis is conducted entirely in US customary (ft, lbf, slugs).
-EASA CS-25 certification work is typically submitted in SI (N, m, kg).
+SI is the internal computation standard throughout this project (see `CLAUDE.md §Unit system`
+and `doc/analysis_code.md`). All section loads, geometry, and physical quantities are stored
+and written in SI. This applies to both intermediate computation and final output files
+(NASTRAN FORCE/MOMENT cards in N and N·m; SMT tables in N, N·m, m).
 
-**Option A — US customary output only.**
-No SI conversion. Keep the unit system uniform throughout.
+EASA CS-25 and FAA FAR 25 certification work is routinely submitted in SI. US customary
+display is a convenience for engineers working with imperial reference data.
 
-**Option B — Optional SI output mode.**
-Add a units flag to output functions. `unit_convert.py` expanded with
-lbf↔N, ft↔m, slug↔kg constants. Output tables show both or either.
+**Option A — SI output only.**
+All TUI tables and output files use SI. No US customary display. Simplest;
+no additional configuration needed.
 
-**Direction:** [ ]
+**Option B — SI default; optional US customary TUI display.**
+Output files (NASTRAN BDF, SMT CSV) are always in SI. TUI result tables may be
+displayed in US customary (lbf, ft·lbf, ft) when `"display_units": "imperial"` is
+set in `config/defaults.json`. Conversion uses existing constants in `unit_convert.py`.
+SI remains the authoritative output; imperial display is cosmetic only.
+
+**Direction:** [x] Option B — SI is the standard output unit for all files and the
+default TUI display. US customary TUI display is an optional mode controlled by
+`"display_units"` in `config/defaults.json` (values: `"SI"` | `"imperial"`;
+default: `"SI"`). All NASTRAN FORCE/MOMENT cards and CSV output files are always
+written in SI regardless of the display setting. Conversion in TUI display uses
+`unit_convert.py` constants (`N_LBF`, `NM_FTLBF`, `M_FT`); no bare conversion
+literals are permitted in display code.
 
 ---
 

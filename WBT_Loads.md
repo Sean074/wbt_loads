@@ -179,11 +179,14 @@ Optional input. When provided, enables flexible-body load redistribution and
 jig shape computation.
 
 Accepted input formats:
-* Beam stiffness distribution: spanwise stations y, bending stiffness EI
-  (lbf·ft²), torsional stiffness GJ (lbf·ft²), axial stiffness EA (lbf).
+* Beam stiffness distribution: NASTRAN BDF format (GRID, CBAR, PBAR, MAT1,
+  CONM2, SPC, EIGRL cards). All quantities in SI (metres, kg, N, N·m²).
+  Parsed and assembled by `src/beam.py` via the `sbeam` library. See
+  Decision 1d and `doc/architecture.md`.
 * Pre-computed flexibility matrix (aerodynamic influence coefficient matrix,
   AIC): externally generated from a NASTRAN or equivalent FEM solve, supplied
-  as a tabular file of deflection per unit load at each LRA station.
+  as a tabular file of deflection per unit load at each LRA station. Deferred
+  to a future enhancement (Decision 1e).
 
 When the flexibility matrix is provided externally, aeroelastic.py reads it
 directly. When beam stiffness data is provided, the module derives the
