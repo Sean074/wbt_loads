@@ -38,19 +38,22 @@ combined with another.
 A handler function maps cleanly onto this pattern:
 
 ```python
-def handle_trim_condition():
+def handle_run_analysis():
     # --- INPUT ---
-    condition_file = ui.select_condition_file()
-    n_z            = ui.prompt_float("Input load factor: ")
-    x_cg_m         = ui.prompt_float("Input CG position (m): ")
+    analysis_type  = ui.select_analysis_type()          # "A" through "F"
+    csv_path       = ui.select_condition_csv(analysis_type)
+    conditions_df  = condition.load_conditions(csv_path, analysis_type)
 
     # --- ANALYSIS ---
-    trim_state = trim.solve_trim(condition_file, n_z, x_cg_ft)
-    section_loads = loads.compute_loads(trim_state)
+    results = []
+    for _, row in conditions_df.iterrows():
+        trim_state    = trim.solve_trim(row)
+        section_loads = loads.compute_loads(trim_state, row)
+        nastran_out.write(section_loads, row)
+        results.append(section_loads)
 
     # --- OUTPUT ---
-    ui.print_trim_result(trim_state)
-    ui.print_loads_table(section_loads)
+    ui.print_batch_summary(results)
     ui.press_enter_to_continue()
 ```
 
@@ -197,12 +200,28 @@ There is no submenu state — every operation returns to the top-level menu.
 Organise functions in this order, separated by comment banners:
 
 ```
-# File-selection helpers     — select_condition_file, select_lra_file,
-#                               select_mass_file, select_aero_file
-# Manual numeric input        — prompt_float, prompt_int, ask_unit
-# Output helpers — single    — print_trim_result, print_loads_table
-# Output helpers — batch     — print_section_loads, print_aeroelastic_results
+# Analysis-type selection     — select_analysis_type, select_condition_csv
+# File-selection helpers      — select_lra_file, select_mass_file, select_aero_file
+# Manual numeric input         — prompt_float, prompt_int, ask_unit
+# Output helpers — single     — print_trim_result, print_loads_table
+# Output helpers — batch      — print_section_loads, print_batch_summary,
+#                                print_aeroelastic_results
 ```
+
+**`select_analysis_type()`** — renders a numbered panel listing Categories A–F
+with their names; Category F is labelled `"(Phase 2 — deferred)"` and is not
+selectable until Phase 2. Returns the single-letter category ID (`"A"` through
+`"E"`).
+
+**`select_condition_csv(analysis_type)`** — lists CSV files found in
+`data/conditions/<type>/` where `<type>` is the subdirectory name for the
+selected category (e.g. `static_flight`, `dynamic_flight`). Returns the resolved
+`pathlib.Path` to the selected file.
+
+**Display units** — when `APP_CONFIG["display_units"] == "imperial"`, TUI result
+tables convert SI values before display using named constants from `unit_convert.py`
+(`N_LBF`, `NM_FTLBF`, `M_FT`). No bare numeric conversion literals are permitted
+in display functions; all output files remain in SI regardless of this setting.
 
 The module exposes a single `Console` instance (`console`) used by both `ui.py`
 and `menu.py`. Do not instantiate additional consoles.

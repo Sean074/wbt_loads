@@ -57,7 +57,13 @@ and why the structure is organised the way it is.
 │  data/aero/       — aerodynamic database files     │
 │  data/mass/       — NASTRAN CONM2 mass files       │
 │  data/lra/        — loads reference axis files     │
-│  data/conditions/ — condition list files           │
+│  data/conditions/                                  │
+│    ├── static_flight/  — Category A CSVs           │
+│    ├── dynamic_flight/ — Category B CSVs           │
+│    ├── static_ground/  — Category C CSVs           │
+│    ├── dynamic_ground/ — Category D CSVs           │
+│    ├── flap/           — Category E CSVs           │
+│    └── control_surface/— Category F (Phase 2)      │
 │  data/outputs/    — generated results              │
 │    ├── <name>_loads.bdf  — NASTRAN FORCE/MOMENT    │
 │    │     cards per condition per LRA station       │
@@ -77,6 +83,7 @@ wbt_loads/
 ├── src/                     # All application source modules
 │   ├── menu.py              # Presentation — menu handler functions
 │   ├── ui.py                # Presentation — display and prompt helpers
+│   ├── condition.py         # Data model — condition CSV parser (all analysis types)
 │   ├── aero_db.py           # Computation — aero DB import and interpolation
 │   ├── mass_model.py        # Computation — distributed mass (NASTRAN CONM2)
 │   ├── trim.py              # Computation — trim solver
@@ -96,7 +103,13 @@ wbt_loads/
 │   ├── aero/                # Aerodynamic strip load database files
 │   ├── mass/                # NASTRAN CONM2 mass model files
 │   ├── lra/                 # Loads reference axis definition files
-│   ├── conditions/          # Condition list files (maneuvers, flight conditions)
+│   ├── conditions/          # Condition list files — six analysis type subdirectories
+│   │   ├── static_flight/   #   Category A — static flight loads (LOAD_CASE output)
+│   │   ├── dynamic_flight/  #   Category B — dynamic flight loads / gust
+│   │   ├── static_ground/   #   Category C — static ground handling
+│   │   ├── dynamic_ground/  #   Category D — landing and dynamic ground
+│   │   ├── flap/            #   Category E — flap / high-lift loads
+│   │   └── control_surface/ #   Category F — control surface loads (Phase 2; empty)
 │   └── outputs/             # Generated runtime artifacts (not committed)
 │
 ├── doc/                     # Authoritative coding standards
@@ -153,6 +166,23 @@ both `ui.py` and `menu.py`. See `doc/ui.md` for full conventions.
 **Allowed to import:** `rich`, `prompt_toolkit`, `config`
 
 **Must not contain:** computation logic.
+
+---
+
+### `src/condition.py` — Condition CSV parser
+
+Parses condition list CSVs for any of the six analysis type categories (A–F).
+Validates that the required columns for the selected analysis type are present,
+converts all `_deg` control-deflection columns to `_rad` via `DEG_RAD`, and
+returns a structured DataFrame (one row per condition).
+
+The `analysis_type` argument selects which set of required columns is validated:
+`"A"` through `"F"` correspond to the categories in `decision.md §9`.
+
+**Allowed to import:** `pandas`, `unit_convert`, `config`
+
+**Must not contain:** display logic, computation logic, or file I/O beyond CSV
+reading via `pandas.read_csv`.
 
 ---
 
@@ -316,8 +346,9 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | Module | May import |
 |---|---|
 | `main.py` | `src/menu`, `src/ui`, `src/config` |
-| `src/menu.py` | computation modules, `ui`, `config` |
+| `src/menu.py` | computation modules, `condition`, `ui`, `config` |
 | `src/ui.py` | `rich`, `prompt_toolkit`, `config` |
+| `src/condition.py` | `pandas`, `unit_convert`, `config` |
 | `src/aero_db.py` | `numpy`, `scipy`, `pandas`, `unit_convert`, `config` |
 | `src/mass_model.py` | `numpy`, `pandas` |
 | `src/lra.py` | `numpy` |
@@ -339,15 +370,29 @@ No computation module may import from the presentation layer (`ui.py`, `menu.py`
 ## Data flow
 
 ```
-User selects menu item
+User selects "Run analysis" from main menu
         │
         ▼
-menu.py handler
-  ├── ui.py           ← prompts user for inputs / file selection
-  ├── trim.py         ← solve balanced flight state
-  ├── loads.py        ← sum aero + inertia loads to LRA/grid
+ui.select_analysis_type()
+    — numbered menu; Categories A–F; F labelled "(Phase 2 — deferred)"
+        │
+        ▼
+ui.select_condition_csv(analysis_type)
+    — lists CSVs in data/conditions/<type>/ subdirectory
+        │
+        ▼
+condition.load_conditions(csv_path, analysis_type)
+    — parses CSV; validates required columns for selected analysis type
+        │
+        ▼
+menu.py handler iterates over all condition rows in the DataFrame:
+  ├── trim.py         ← solve balanced flight state (flight loads only)
+  ├── loads.py        ← sum aero + inertia + applied loads to LRA/grid
   ├── nastran_out.py  ← write FORCE/MOMENT cards to data/outputs/
-  └── ui.py           ← render result tables / panels
+  └── (loop continues for next condition)
+        │
+        ▼
+ui.print_batch_summary(results)
         │
         ▼
 ui.press_enter_to_continue()
@@ -511,7 +556,9 @@ C defers *automated formula enforcement*, not the ability to analyse a GA aircra
 
 **New load case or maneuver type:**
 Add to `maneuver.py` if time-history based, or to `loads.py` for static cases.
-Add a condition type identifier to the condition list format. Add a menu handler
+Add the new `maneuver_type` value to the enumeration in `decision.md §1b` and to
+the appropriate per-type CSV schema in `decision.md §9`. Update `condition.py`
+to validate the new column if type-specific columns are added. Add a menu handler
 in `menu.py`. Add a display function to `ui.py` if the output shape differs from
 existing tables.
 

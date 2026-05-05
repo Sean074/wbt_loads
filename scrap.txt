@@ -4,3 +4,37 @@ Decision 6 FAR 23, OPTION C defer to a future release. Ensure that the program a
 Decision 7. Load Envelope, an independent tool CRITIC_LOADS will be used to post process the output from WBT_LOADS (the loads output will be in the form of NASTRAN FORCE and MOMENT cards for each load case at the LRA reference points).  CRITIC_LOADS is independent of WBT_LOADS. CRITIC_LOADS will use "potato" plots to selct cases that envelope the loading a given load station (as defined by the stress team) additional criteria such as shear flow in spars or gauge stresses may also be used as defined by the stress team.
 
 Decision 8. Output Units — Make Optional B SI to be default and is the standard units use within this project. Review the existing documentation for any conflicts and obtain permission to revise.
+
+@decision.md decision 9. Run Mode — Interactive Per-Condition or Batch. The TUI will be used to select a CSV that will define the conditions to be run.  This CSV will be for different analysis types (the analysis types are:
+A. Static Flight Loads (balanced and maneuver)
+B. Dynamic Flight Loads (PSD, TDG)
+C. Static Ground Loads
+D. Dynamic Ground Loads (landing, taxi bump, rough runway, and abrupt braking)
+E. Flap Loads
+F. Control Surface Loads
+
+THe CSV will define all the load case parameters, note the CSV format will ve different for each analysis types.  The generation of the CSV will be through a independent project LOAD_CASE.  LOAD_CASE will use the flight envelop and cg grid, payloads, design airspeeds etc. 
+
+Review the above decision, identify any conflicts or additional questions/decisions. Update all project documentation to reflect the above.  
+
+
+@decision.md decision  10. Maneuver n_z_max. Option B. Update all project documentation to reflect the decision.
+
+@decision.md decision 11. Gust and Ground Load Modules — Where Does the Code Live?: Option A. The 
+
+A. Static Flight Loads (SFL)
+    A.1 Longitudinal - Balanced
+    A.2 Longitudinal - Maneuver
+    A.3 Lateral - Balanced
+    A.4 Lateral - Maneuver
+B. Dynamic Flight Loads (DFL)
+    B.1 PSD
+    B.2 TDG
+C. Static Ground Loads (SGL)
+D. Dynamic Ground Loads (DGL)
+    D.1 Landing
+    D.2 Taxi / Braking
+E. Flap Loads (FLAPS)
+F. Control Surface Loads (CONTROLS)
+
+Suggest a structure for src and a proposed file structure and naming convention. Review the updates required to documentation.

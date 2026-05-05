@@ -198,6 +198,7 @@ bare literal `1.5` where the factor of safety is applied.
 | Brake torque | `t_brake_nm` | N·m |
 | Brake friction coefficient | `mu_brake_nd` | dimensionless |
 | Gust mass ratio | `mu_g_nd` | dimensionless; see §b2 formula |
+| Vertical bump load factor | `nz_bump_nd` | dimensionless; taxi bump / rough runway |
 
 ### Continuous turbulence — 2-DOF model
 
@@ -229,6 +230,7 @@ respective sections above; only the metadata columns are listed here.
 | Condition description | `description` | String; human-readable label |
 | Load category | `category` | String enum: `maneuver` \| `gust` \| `ground` |
 | Case type | `maneuver_type` | String enum; see `decision.md §1b` for full list |
+| Analysis type | *(CSV subdirectory)* | Determined by which `data/conditions/<type>/` subdirectory the CSV is in; not a column — see `decision.md §9` |
 
 CSV columns carrying control surface deflections use `_deg` names
 (`elevator_deg`, `aileron_deg`, `rudder_deg`, `flap_deg`, `spoiler_deg`,
@@ -354,10 +356,18 @@ def solve_trim(h_press_ft, V_EAS_kts, n_z, x_cg_ft): ...
 
 ## Analysis methods
 
-Four distinct analysis methods are used, each covering a different load category.
-The same aerodynamic database, mass model, and LRA infrastructure support all four.
-Each method is described below: the physical approach, the governing equations,
-the key variables, and the modules responsible for each step.
+Six analysis method categories map to the six TUI analysis types from
+`decision.md §9`. The same aerodynamic database, mass model, and LRA
+infrastructure support all categories. Each is described below.
+
+| TUI Category | Analysis method section | Phase |
+|---|---|---|
+| A — Static Flight Loads | §a | 1 |
+| B — Dynamic Flight Loads | §b | 1 (PSD); 2 (TDG) |
+| C — Static Ground Loads | §c | 1 |
+| D — Dynamic Ground Loads | §d | 1 (quasi-static); 2 (dynamic gear) |
+| E — Flap / High-Lift Loads | §e | 1 |
+| F — Control Surface Loads | §f | 2 (deferred) |
 
 All equations use SI quantities throughout.
 
@@ -819,6 +829,51 @@ airframe section loads. Critical loads are the extrema over the time history.
 `f_gear_n`, `alpha_td_rad`, `k_gear_n_m`, `c_gear_ns_m`, `nx_nd`, `ny_nd`
 
 **Modules:** `ground.py` (TBD — see decision.md §11) → `mass_model.py` → `loads.py`
+
+---
+
+### e) Flap / high-lift loads
+
+**Regulatory basis:**
+
+| Load case | FAR 25 / CS-25 |
+|---|---|
+| High lift device — flap/slat extended conditions | 25.345 |
+| Limit maneuver load factors with high-lift devices | 25.345(a) |
+| Gust loads with high-lift devices | 25.345(b) |
+
+**Method:** Identical to the static flight loads method (§a) for maneuver cases and
+the discrete gust method (§b2) for gust cases, with the following differences:
+
+1. A non-zero `flap_deg` column in the condition CSV activates the Category E
+   handler. Routing to §e is triggered by `flap_deg > 0`, not by a separate
+   `maneuver_type` value.
+2. The aerodynamic database uses the flap-deployed configuration increment tables
+   (baseline table tag includes the flap configuration; see `doc/loads_aero_db.md`).
+3. The maneuver load factor envelope is limited per FAR 25.345(a): at V_F, n_z
+   must not exceed the value from the condition list (supplied by LOAD_CASE).
+4. Aeroelastic corrections apply to flap-deployed configurations using the same
+   `aeroelastic.py` path as §a.
+
+**Supported `maneuver_type` values:** `symmetric_pullup`, `pushover`,
+`high_lift_gust`.
+
+**Primary variables:** `delta_f_rad`, `nz_nd`, `v_eas_m_s`, `u_gust_m_s`,
+plus all §a and §b2 primary variables.
+
+**Modules:** `trim.py` → `aero_db.py` → `loads.py` → `aeroelastic.py`
+
+---
+
+### f) Control surface loads (deferred — Phase 2)
+
+**Regulatory basis:** FAR 25.395 (pilot applied loads), 25.397 (surface balance
+loads), 25.405 (secondary control loads).
+
+**Status:** Deferred to Phase 2. No analysis code or CSV schema is defined in Phase 1.
+The Category F slot is reserved in the TUI and `data/conditions/control_surface/`
+directory. This section is a placeholder; content will be added when Phase 2 is
+implemented.
 
 ---
 

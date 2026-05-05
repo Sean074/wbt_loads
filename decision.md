@@ -97,6 +97,23 @@ radians at ingestion in `condition.py`.
 | `lateral_drift` | `ground` | FAR 25.485 |
 | `braked_roll` | `ground` | FAR 25.493 |
 | `ground_turn` | `ground` | FAR 25.495 |
+| `taxi_bump` | `ground` | FAR 25.491 |
+| `rough_runway` | `ground` | FAR 25.491 |
+| `abrupt_braking` | `ground` | FAR 25.493 / 25.507 |
+
+> **Note — multi-type CSV hierarchy (Decision 9):** The columns above define the
+> **common-column baseline** shared by all six per-analysis-type condition CSVs
+> (Categories A–F). Each analysis type extends this baseline with type-specific
+> columns. See `decision.md §9` for the per-type column schemas and
+> `data/conditions/` subdirectory structure.
+>
+> The `category` enum (`maneuver` | `gust` | `ground`) and the `maneuver_type`
+> enum route conditions to the correct computation path within WBT_LOADS. The
+> six analysis-type categories (A–F) in §9 are the TUI and LOAD_CASE
+> organisational layer on top of this routing — they determine which CSV
+> subdirectory is presented to the user and which handler is called, but they
+> do not replace the `category` / `maneuver_type` dispatch inside the analysis
+> engine.
 
 ### 1c. Loads Reference Axis (LRA) definition
 Each entry defines a spanwise station, its xyz position, and the local frame orientation.
@@ -528,7 +545,157 @@ Both paths use the same computation; differ only in the loop and accumulation.
 The TUI always runs the full condition list. Single-condition inspection is
 done by filtering the condition list file to one entry.
 
-**Direction:** [ ]
+**Direction:** [x]
+
+**Run mode — analysis-type batch with LOAD_CASE CSV input:**
+
+The TUI presents a menu of six analysis type categories. The user selects one,
+then selects a pre-generated CSV for that analysis type from the corresponding
+`data/conditions/<type>/` subdirectory. The program runs all conditions in the
+CSV (batch mode) without prompting between conditions. There is no single-condition
+interactive mode; condition granularity is managed inside the independent
+**LOAD_CASE** project that generates the CSVs. WBT_LOADS consumes condition CSVs
+read-only. Multiple analysis types may be run in a single session without
+restarting the program.
+
+#### Analysis type categories
+
+| ID | Name | Regulatory basis | CSV subdirectory |
+|---|---|---|---|
+| A | Static Flight Loads (balanced maneuver) | FAR 25.331, 25.337, 25.349, 25.351 | `data/conditions/static_flight/` |
+| B | Dynamic Flight Loads (PSD, TDG) | FAR 25.341(a) and 25.341(b) | `data/conditions/dynamic_flight/` |
+| C | Static Ground Loads | FAR 25.489–25.519 (quasi-static) | `data/conditions/static_ground/` |
+| D | Dynamic Ground Loads | FAR 25.473–25.487, 25.491 | `data/conditions/dynamic_ground/` |
+| E | Flap / High-Lift Loads | FAR 25.345 | `data/conditions/flap/` |
+| F | Control Surface Loads | FAR 25.395–25.415 | `data/conditions/control_surface/` |
+
+Category F is **deferred to Phase 2**. The subdirectory slot is reserved; no CSV
+schema or analysis code is defined in Phase 1. When implemented, Category F covers
+pilot applied loads (FAR 25.395), surface balance loads (FAR 25.397), and secondary
+control loads (FAR 25.405).
+
+#### CSV format — per-type column schemas
+
+Each analysis type CSV shares the **common-column baseline** defined in §1b. Each
+type then adds type-specific columns below. LOAD_CASE is responsible for generating
+complete, valid CSVs; WBT_LOADS validates only the column schema (required columns
+present, types correct, SI units).
+
+**Category A — Static Flight Loads**
+
+Common columns only (§1b). Supported `maneuver_type` values: `symmetric_pullup`,
+`pushover`, `rolling_pullout`, `yaw`.
+
+**Category B — Dynamic Flight Loads**
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| *(all §1b common columns)* | | | |
+| `u_gust_m_s` | float | m/s | Design gust velocity (EAS); Phase 1 static equivalent |
+| `h_gust_m` | float | m | Gust gradient distance; **Phase 2 TDG only — ignored in Phase 1** |
+| `n_gust_steps` | int | — | TDG H sweep step count; **Phase 2 TDG only — ignored in Phase 1** |
+
+Phase 1 note: `maneuver_type` values `discrete_gust_vertical` and
+`discrete_gust_lateral` use the pre-Amendment 25-86 static equivalent method
+(§b2 in `doc/analysis_code.md`). In Phase 2 these same values will be rerouted
+to the 1-cosine TDG path. The `h_gust_m` and `n_gust_steps` columns are present
+in Phase 1 CSVs to keep the format stable for LOAD_CASE; WBT_LOADS ignores them
+until Phase 2.
+
+**Category C — Static Ground Loads**
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| *(all §1b common columns)* | | | |
+| `nx_nd` | float | — | Axial load factor (braking) |
+| `ny_nd` | float | — | Lateral load factor (turning, side cases) |
+| `mu_brake_nd` | float | — | Brake friction coefficient; typical 0.80 |
+| `v_ground_m_s` | float | m/s | Ground speed (taxi turn) |
+| `r_turn_m` | float | m | Turn radius (taxi turn) |
+
+Supported `maneuver_type` values: `braked_roll`, `ground_turn`, `nose_wheel_yaw`,
+`towing`, `pivoting`, `jacking`.
+
+**Category D — Dynamic Ground Loads (Phase 1: quasi-static reserve energy)**
+
+Phase 1 applies the quasi-static reserve energy method (Decision 3, Option A) to all
+Category D sub-cases. Dynamic time-history analysis (spring-damper gear model) is Phase 2.
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| *(all §1b common columns)* | | | |
+| `v_sink_m_s` | float | m/s | Design sink rate (landing cases) |
+| `d_stroke_m` | float | m | Available gear stroke |
+| `eta_gear_nd` | float | — | Gear absorption efficiency; default 0.80 per FAR 25.473(b) |
+| `nx_nd` | float | — | Axial load factor (braking sub-cases) |
+| `ny_nd` | float | — | Lateral load factor (one-gear, lateral drift) |
+| `nz_bump_nd` | float | — | Applied vertical bump load factor (taxi bump, rough runway) |
+
+Supported `maneuver_type` values: `level_landing`, `tail_down_landing`,
+`one_gear_landing`, `lateral_drift`, `rebound_landing`, `taxi_bump`,
+`rough_runway`, `abrupt_braking`. See the extended `maneuver_type` enumeration
+in §1b.
+
+**Category E — Flap / High-Lift Loads**
+
+Common columns only (§1b). A non-zero `flap_deg` column is mandatory and signals
+the high-lift analysis path. `maneuver_type` values used: `symmetric_pullup`,
+`pushover`, `high_lift_gust`. Routing to the Category E handler is triggered by
+`flap_deg > 0`; the handler applies the appropriate aerodynamic increment for
+the deployed flap configuration.
+
+**Category F — Control Surface Loads (deferred — Phase 2)**
+
+No CSV schema defined in Phase 1. The `data/conditions/control_surface/`
+subdirectory is created but remains empty.
+
+#### `data/conditions/` directory structure
+
+```
+data/conditions/
+  ├── static_flight/          # Category A CSVs from LOAD_CASE
+  ├── dynamic_flight/         # Category B CSVs from LOAD_CASE
+  ├── static_ground/          # Category C CSVs from LOAD_CASE
+  ├── dynamic_ground/         # Category D CSVs from LOAD_CASE
+  ├── flap/                   # Category E CSVs from LOAD_CASE
+  └── control_surface/        # Category F — reserved; empty in Phase 1
+```
+
+#### TUI workflow
+
+```
+User selects "Run analysis" from main menu
+        │
+        ▼
+ui.select_analysis_type()
+    — numbered menu of categories A–F; F labelled "(Phase 2 — deferred)"
+        │
+        ▼
+ui.select_condition_csv(analysis_type)
+    — lists CSVs in data/conditions/<type>/ subdirectory
+        │
+        ▼
+condition.load_conditions(csv_path, analysis_type)
+    — parses CSV; validates required columns for the selected type
+        │
+        ▼
+menu.py handler iterates over all condition rows:
+  for each row → analysis engine → loads.py → nastran_out.py
+        │
+        ▼
+ui.print_batch_summary(results)
+        │
+        ▼
+ui.press_enter_to_continue()  →  returns to main menu
+```
+
+#### Relationship to LOAD_CASE project
+
+LOAD_CASE is an independent program that generates condition CSVs from the flight
+envelope, CG grid, payload grid, and design airspeed tables. WBT_LOADS does not
+validate that the supplied CSV represents a complete or compliant set of conditions
+for certification — that responsibility belongs to LOAD_CASE and the responsible
+engineer. WBT_LOADS validates only the column schema.
 
 ---
 
@@ -628,6 +795,7 @@ and any consuming module can be written. Candidate keys:
 | `gust_gradient_max_ft` | Maximum gust gradient H | `350` |
 | `n_gust_steps` | Number of H steps in gust sweep | `25` |
 | `output_dir` | Output directory path | `data/outputs` |
+| `display_units` | TUI result table display units — `"SI"` or `"imperial"` | `"SI"` |
 
 Are there additional keys? Should any of the above move to the condition list instead?
 
