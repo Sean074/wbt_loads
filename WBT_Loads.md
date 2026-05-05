@@ -22,15 +22,22 @@ Input data:
 
 Outputs:
 * Distributed section loads at each LRA station: shear (Vz, Vy), bending moment
-  (Mx, Mz), torsion (My), axial force (Fx) — limit and ultimate.
-* Load envelope — critical condition and load value per station per load component.
-* Design load summary — critical case ID, flight condition, and load by station.
+  (Mx, Mz), torsion (My), axial force (Fx) — limit and ultimate, one set per
+  load condition.
+* NASTRAN FORCE and MOMENT bulk data cards — per-condition, per-LRA-station section
+  loads formatted for direct consumption by CRITIC_LOADS or other post-processing
+  tools. One FORCE card and one MOMENT card per LRA station per condition, grouped
+  by load set ID (SID = condition sequence number).
 * Shear-moment-torque (SMT) diagrams.
 * Trim balance verification — residual forces and moments for each condition.
 * Aircraft simulation vs. load model checks.
 * Aeroelastic effectiveness — flexible vs. rigid control surface effectiveness ratio
   per surface.
 * Jig shape determination from the cruise condition.
+
+Note: Load envelope selection and design load summary are the responsibility of
+CRITIC_LOADS, an independent post-processing tool that reads the WBT_LOADS NASTRAN
+card output. See Decision 7 in `decision.md §7`.
 
 Load conditions are per FAA/EASA regulations FAR/CS 25 (implemented) and FAR/CS
 23 (provisioned; deferred to a future release — see Decision 6, Option C in
@@ -224,8 +231,12 @@ Per FAR 25.301(b) and FAR 25.303:
 * **Ultimate loads** — limit loads multiplied by a factor of safety of 1.5.
 
 Both limit and ultimate section loads are computed and reported for every
-active condition. The load envelope identifies the critical condition for each
-load component at each station for both limit and ultimate.
+active condition.
+
+Load envelope selection is performed by CRITIC_LOADS, an independent external
+tool that reads the WBT_LOADS NASTRAN FORCE/MOMENT card output. WBT_LOADS does
+not compute or report an envelope. See Decision 7 (`decision.md §7`) and
+`doc/architecture.md §CRITIC_LOADS interface`.
 
 ---
 
@@ -233,9 +244,8 @@ load component at each station for both limit and ultimate.
 
 | Output | Description |
 |---|---|
-| Section loads per condition | Vz, Vy, Fx, Mx, My, Mz at each LRA station — limit and ultimate |
-| Load envelope | Critical condition ID and load value per station per component |
-| Design load summary | Table of critical case, condition, and load by station |
+| Section loads per condition | Vz, Vy, Fx, Mx, My, Mz at each LRA station — limit and ultimate, one set per condition |
+| NASTRAN FORCE/MOMENT cards | Per-condition section loads as NASTRAN bulk data; primary output for CRITIC_LOADS post-processing |
 | SMT diagrams | Shear, bending moment, and torsion plotted vs. spanwise station |
 | Trim balance check | Lift, drag, moment residuals; confirms balanced condition |
 | Simulation vs. model check | Compares whole-aircraft forces/moments to flight simulation or DTA data |

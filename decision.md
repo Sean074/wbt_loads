@@ -453,7 +453,30 @@ needed for structural sizing.
 **Option B — Absolute maximum only.**
 Report the condition with the largest |value| regardless of sign.
 
-**Direction:** [ ]
+**Option C — Load envelope is performed by an independent post-processing tool.**
+WBT_LOADS outputs per-condition section loads in a standard format; a separate
+external program selects the critical cases and builds the envelope.
+
+**Direction:** [x] Option C — Load envelope is the responsibility of an independent
+external tool, CRITIC_LOADS.
+
+WBT_LOADS produces one set of section loads per load condition at each LRA
+reference point. These are written as NASTRAN FORCE and MOMENT bulk data cards
+(one FORCE card and one MOMENT card per LRA station per condition, grouped by
+load set ID equal to the condition sequence number). The output file is placed
+in `data/outputs/` under the naming convention defined in decision.md §26.
+
+CRITIC_LOADS is a completely independent program that reads the WBT_LOADS
+NASTRAN card output and selects critical cases. Its primary method is the
+"potato plot" — a multi-component interaction diagram in load-space (e.g.
+Vz vs. Mx, My vs. Vz) drawn at each load station as defined by the stress team.
+Cases whose load vector lies on or near the boundary of the potato define the
+critical envelope. Additional envelope criteria (spar shear flow, gauge stresses,
+combined interaction checks) may be applied at the stress team's discretion.
+
+WBT_LOADS does not compute or report a load envelope. It is a loads supplier only.
+Load station definitions used by CRITIC_LOADS are the responsibility of the stress
+team and are external to WBT_LOADS.
 
 ---
 

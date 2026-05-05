@@ -944,6 +944,34 @@ Applies `FS = 1.5` to all limit loads to produce ultimate loads per FAR 25.303.
 
 ---
 
+### `nastran_out.py` — NASTRAN FORCE/MOMENT card writer
+
+Formats the per-condition section load arrays from `loads.py` as NASTRAN bulk
+data cards and writes `data/outputs/<name>_loads.bdf`. No computation; pure
+formatting.
+
+**FORCE card format (free-field):**
+`FORCE, SID, GID, 0, 1.0, vx_n, fy_n, vz_n`
+
+**MOMENT card format (free-field):**
+`MOMENT, SID, GID, 0, 1.0, mx_nm, my_nm, mz_nm`
+
+Where:
+- `SID` — load set ID = condition sequence number (1-based integer)
+- `GID` — grid ID = LRA station index (1-based; matches station order in JSON)
+- Components are in the structural frame (x aft, y starboard, z up) in SI units
+  (N for forces, N·m for moments); no unit conversion in this module
+- Ultimate load cards are written in a separate block with `SID += 10000 × n_cond`
+
+**Key variable:**
+
+| Quantity | Code variable | Notes |
+|---|---|---|
+| NASTRAN load set ID | `sid_nd` | dimensionless integer; equals condition sequence number |
+| NASTRAN grid point ID | `gid_nd` | dimensionless integer; equals 1-based LRA station index |
+
+---
+
 ### `aeroelastic.py` — Aeroelastic corrections and jig shape
 
 Used by: static flight loads (§a) only. Not applied to ground loads.

@@ -59,6 +59,9 @@ and why the structure is organised the way it is.
 │  data/lra/        — loads reference axis files     │
 │  data/conditions/ — condition list files           │
 │  data/outputs/    — generated results              │
+│    ├── <name>_loads.bdf  — NASTRAN FORCE/MOMENT    │
+│    │     cards per condition per LRA station       │
+│    └── <name>_smt.csv   — section load tables     │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -82,6 +85,7 @@ wbt_loads/
 │   ├── loads.py             # Computation — loads summation to LRA/grid points
 │   ├── aeroelastic.py       # Computation — aeroelastic corrections + jig shape
 │   ├── lra.py               # Data model — loads reference axis and grid
+│   ├── nastran_out.py       # Output — NASTRAN FORCE/MOMENT card writer
 │   ├── unit_convert.py      # Support — conversion constants only
 │   └── config.py            # Support — config file loader
 │
@@ -258,7 +262,20 @@ points. Produces the final distributed load arrays for output.
 
 **Allowed to import:** `aero_db`, `mass_model`, `lra`, `unit_convert`
 
-**Must not contain:** display logic, trim or maneuver logic.
+**Must not contain:** display logic, trim or maneuver logic, envelope accumulation.
+
+---
+
+### `src/nastran_out.py` — NASTRAN FORCE/MOMENT card writer
+
+Formats the per-condition section loads from `loads.py` as NASTRAN bulk data
+FORCE and MOMENT cards and writes them to `data/outputs/`. One FORCE card and
+one MOMENT card are written per LRA station per condition. The NASTRAN load set
+ID (SID) equals the condition sequence number in the condition list.
+
+**Allowed to import:** `lra`, `unit_convert`, stdlib (`pathlib`, `io`)
+
+**Must not contain:** computation logic, display logic, envelope selection.
 
 ---
 
@@ -311,6 +328,7 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `numpy`, `scipy` |
 | `src/unit_convert.py` | nothing |
 | `src/config.py` | stdlib only (`json`, `pathlib`) |
+| `src/nastran_out.py` | `lra`, `unit_convert`, stdlib only |
 | `src/far_reg.py` | `unit_convert` only — deferred; module does not yet exist |
 
 No computation module may import from the presentation layer (`ui.py`, `menu.py`,
@@ -325,10 +343,11 @@ User selects menu item
         │
         ▼
 menu.py handler
-  ├── ui.py       ← prompts user for inputs / file selection
-  ├── trim.py     ← solve balanced flight state
-  ├── loads.py    ← sum aero + inertia loads to LRA/grid
-  └── ui.py       ← render result tables / panels
+  ├── ui.py           ← prompts user for inputs / file selection
+  ├── trim.py         ← solve balanced flight state
+  ├── loads.py        ← sum aero + inertia loads to LRA/grid
+  ├── nastran_out.py  ← write FORCE/MOMENT cards to data/outputs/
+  └── ui.py           ← render result tables / panels
         │
         ▼
 ui.press_enter_to_continue()
@@ -346,6 +365,18 @@ menu.py handler
   └── aeroelastic.py
         ├── lra.py    ← resolve positions on LRA
         └── scipy     ← apply influence coefficient matrix
+```
+
+Downstream (external — not part of this application):
+
+```
+data/outputs/<name>_loads.bdf
+        │
+        ▼ read by
+CRITIC_LOADS (independent tool)
+  ├── potato plots    ← multi-component interaction diagrams per load station
+  ├── load envelope   ← critical case selection per component per station
+  └── design summary  ← critical case ID, condition, and load by station
 ```
 
 ---
@@ -371,6 +402,55 @@ defined in `doc/aerospace_variables_reference.csv` (`code_variable_name` column)
 For project-specific quantities not in that file, follow the same convention:
 all-lowercase, underscore-separated, SI unit suffix. See `doc/analysis_code.md`
 for the full reference.
+
+---
+
+## CRITIC_LOADS interface — load envelope (Decision 7)
+
+Decision 7 (`decision.md §7`) establishes that load envelope selection is the
+responsibility of CRITIC_LOADS, an independent external post-processing tool.
+WBT_LOADS is a **loads supplier only**; it does not compute or report a load
+envelope internally.
+
+### What WBT_LOADS produces
+
+For each completed analysis run, `src/nastran_out.py` writes one NASTRAN bulk
+data file (`data/outputs/<name>_loads.bdf`) containing:
+
+- One **FORCE** card per LRA station per condition — components `(vx_n, fy_n, vz_n)`
+  in the structural frame (x aft, y starboard, z up).
+- One **MOMENT** card per LRA station per condition — components `(mx_nm, my_nm, mz_nm)`
+  in the structural frame.
+- Load set ID (SID) = condition sequence number in the condition list (1-based).
+- Coordinate system ID (CID) = 0 (basic / global frame).
+- Grid point IDs correspond to the LRA station index in the surface JSON file.
+
+Both limit and ultimate values are written; ultimate cards are placed in a
+separate load case block with SID offset by `10000 × n_conditions`.
+
+### What CRITIC_LOADS does (external — not implemented here)
+
+CRITIC_LOADS reads the NASTRAN card output and applies the stress team's
+envelope criteria:
+
+- **Potato plots** — multi-component interaction diagrams in load-space (e.g.
+  Vz vs. Mx, My vs. Vz) drawn at each load station as defined by the stress team.
+  Cases whose load vector lies on or near the convex hull of the potato are the
+  critical envelope candidates.
+- **Additional criteria** — spar shear flow, gauge stresses, combined interaction
+  checks, or other structural response quantities defined by the stress team.
+
+Load station definitions used by CRITIC_LOADS are independent of the LRA station
+definitions in WBT_LOADS. The stress team maps WBT_LOADS LRA grid points to their
+own structural load stations when setting up CRITIC_LOADS.
+
+### Module boundary
+
+`src/nastran_out.py` is the only module in this application that writes the
+NASTRAN output file. No other module writes to `data/outputs/` except via
+`nastran_out.py` (for BDF output) or the TUI chart helpers (for SMT PNG/CSV).
+No application module may implement envelope accumulation, potato plot logic,
+or critical case selection — those responsibilities belong entirely to CRITIC_LOADS.
 
 ---
 
