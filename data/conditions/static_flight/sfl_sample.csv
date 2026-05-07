@@ -1,0 +1,5 @@
+condition_id,description,maneuver_type,h_m,v_eas_m_s,m_ac_kg,x_cg_nd,nz_nd,elevator_deg,aileron_deg,rudder_deg,fos_nd
+C001,Symmetric pull-up 2.5g cruise,pull_up,10668,205.7,45000,0.30,2.5,3.2,0.0,0.0,1.5
+C002,Push-over cruise,push_over,10668,205.7,45000,0.30,-1.0,-8.5,0.0,0.0,1.5
+C003,Symmetric pull-up 2.5g low altitude,pull_up,0,197.3,45000,0.30,2.5,3.5,0.0,0.0,1.5
+C004,Symmetric pull-up 2.5g high altitude,pull_up,7620,231.4,42000,0.32,2.5,4.1,0.0,0.0,1.5
