@@ -121,6 +121,74 @@ def print_lra_table(surface: str, stations: list) -> None:
     console.print(Panel(tbl, title=f"[bold]LRA — {surface}[/bold]", border_style="cyan"))
 
 
+def show_lra_3d(surface: str, stations: list) -> None:
+    import numpy as np
+    try:
+        import matplotlib
+        if _try_display():
+            matplotlib.use("TkAgg")
+        else:
+            matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    except Exception as exc:
+        print_error(f"matplotlib unavailable: {exc}")
+        return
+
+    xs = np.array([s["position_m"][0] for s in stations])
+    ys = np.array([s["position_m"][1] for s in stations])
+    zs = np.array([s["position_m"][2] for s in stations])
+    us = np.array([s["normal_nd"][0] for s in stations])
+    vs = np.array([s["normal_nd"][1] for s in stations])
+    ws = np.array([s["normal_nd"][2] for s in stations])
+
+    diag = np.sqrt(xs.ptp() ** 2 + ys.ptp() ** 2 + zs.ptp() ** 2)
+    arrow_len = max(diag * 0.08, 0.5)
+
+    try:
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection="3d")
+        fig.patch.set_facecolor("#1a1a1a")
+        ax.set_facecolor("#1a1a1a")
+
+        ax.plot(xs, ys, zs, color="#00bfff", linewidth=2, label="LRA axis")
+        ax.scatter(xs, ys, zs, color="#00bfff", s=18, zorder=5)
+        ax.quiver(xs, ys, zs, us, vs, ws,
+                  length=arrow_len, normalize=True,
+                  color="#ffd700", alpha=0.85, label="unit normal")
+
+        step = 1 if len(stations) <= 14 else 2
+        for i in range(0, len(stations), step):
+            ax.text(xs[i], ys[i], zs[i], stations[i]["station_id"],
+                    fontsize=6, color="white", alpha=0.65)
+
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.label.set_color("white")
+            axis.pane.fill = False
+            axis._axinfo["grid"]["color"] = (1, 1, 1, 0.12)
+        ax.tick_params(colors="white", labelsize=7)
+        ax.set_xlabel("x (m)")
+        ax.set_ylabel("y (m)")
+        ax.set_zlabel("z (m)")
+        ax.set_title(f"LRA — {surface}", color="white", fontsize=11)
+        ax.legend(facecolor="#2a2a2a", edgecolor="#00bfff",
+                  labelcolor="white", fontsize=8)
+
+        half = np.array([xs.ptp(), ys.ptp(), zs.ptp()]).max() / 2
+        mx, my, mz = xs.mean(), ys.mean(), zs.mean()
+        ax.set_xlim(mx - half, mx + half)
+        ax.set_ylim(my - half, my + half)
+        ax.set_zlim(mz - half, mz + half)
+
+        fig.tight_layout()
+        console.print("[cyan]Displaying LRA 3D viewer — close window to continue[/cyan]")
+        plt.show()
+    except RuntimeError as exc:
+        print_error(f"No display available: {exc}")
+    finally:
+        plt.close("all")
+
+
 def print_condition_table(conditions_df) -> None:
     tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     display_cols = [c for c in conditions_df.columns if not c.endswith("_rad")]

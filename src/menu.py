@@ -82,6 +82,7 @@ def handle_view_lra() -> None:
 
     # --- OUTPUT ---
     ui.print_lra_table(data["surface"], data["stations"])
+    ui.show_lra_3d(data["surface"], data["stations"])
     ui.press_enter_to_continue()
 
 

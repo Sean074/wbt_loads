@@ -16,6 +16,8 @@
 - `src/mass_model.py` — NASTRAN CONM2 parser (small-field + free-field)
 - `src/condition.py` — condition CSV parser for types A–E, degree→radian conversion
 - `src/lra.py` — LRA loader, `resolve_position`, `sum_to_lra`
+- `ui.show_lra_3d` — 3D matplotlib viewer for LRA spine and unit normals
+  (invoked from "L — View LRA" after the station table)
 - `src/unit_convert.py` — conversion constants
 - `src/config.py` — config loader
 - `data/lra/` — four surface LRA JSON files (wing, htail, vtail, fuselage)

@@ -28,6 +28,8 @@ Outputs:
   loads formatted for direct consumption by CRITIC_LOADS or other post-processing
   tools. One FORCE card and one MOMENT card per LRA station per condition, grouped
   by load set ID (SID = condition sequence number).
+* LRA geometry viewer — 3D matplotlib window showing each surface's LRA spine
+  and unit normals at each station (accessible from the "L — View LRA" menu item).
 * Shear-moment-torque (SMT) diagrams.
 * Trim balance verification — residual forces and moments for each condition.
 * Aircraft simulation vs. load model checks.

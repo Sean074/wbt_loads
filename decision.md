@@ -1385,3 +1385,32 @@ only (sea level to ~51 000 ft / 15 545 m) keeps the scope minimal.
 `src/atmos.py`. The module is self-contained: it imports only `math` and `numpy`
 (no other WBT_LOADS modules) so it can be imported and used independently of the
 rest of the program. See `doc/architecture.md §src/atmos.py`.
+
+---
+
+## 31. LRA Viewer — Display Mode
+
+The "L — View LRA" menu option needs to show the geometry of the Loads Reference
+Axis for verification before running any analysis.
+
+**Option A — Table only.**
+Print the station table (`print_lra_table`) and return. Quick and works headless.
+Does not give the engineer a spatial picture of sweep, dihedral, and normal
+directions.
+
+**Option B — 3D plot only.**
+Open a matplotlib 3D window. Fails silently on headless hosts; the engineer
+loses the numeric station data.
+
+**Option C — Table then 3D plot.**
+Print the station table first, then open the 3D matplotlib window. The engineer
+gets both numeric verification and a spatial picture. Headless-safe: if the 3D
+window cannot open, the table is already on screen and `press_enter_to_continue`
+holds it there.
+
+**Direction:** [x] Option C — `ui.print_lra_table` is called first, followed by
+`ui.show_lra_3d`. The 3D window shows the LRA spine as a cyan connected line and
+unit normals as gold quiver arrows at each station. Arrow length is scaled to 8%
+of the bounding-box diagonal so it is proportionate across surfaces of very
+different physical size (wing full-span ~26 m vs. vtail height ~5 m). Axes are
+forced to equal scale. See `doc/ui.md §LRA 3D viewer`.

@@ -343,6 +343,34 @@ tag and condition data as arguments, not a category ID.
 
 ---
 
+## LRA 3D viewer (Decision 31)
+
+The "L — View LRA" menu option displays a station table followed immediately by a
+3D matplotlib pop-up window. The window is produced by `ui.show_lra_3d(surface,
+stations)` and follows the same pattern as the VMT chart helpers.
+
+```python
+ui.show_lra_3d(surface: str, stations: list) -> None
+    # Opens one matplotlib figure with a 3D axes showing:
+    #   - LRA spine: cyan connected line through all station positions
+    #   - Unit normals: gold (amber) quiver arrows at each station, length
+    #     scaled to 8% of the spine bounding-box diagonal
+    #   - Station labels: white text beside each station point (every other
+    #     label when more than 14 stations, to avoid overlap)
+```
+
+Chart display rules (same as VMT charts):
+- Always use `plt.show()` (blocking); never `plt.savefig()` from within the TUI
+- The TUI prints `[cyan]Displaying LRA 3D viewer — close window to continue[/cyan]`
+  before the `plt.show()` call
+- A headless environment (no display) raises `RuntimeError`; the handler catches
+  it, prints `[red]Error: no display available[/red]`, and returns to the menu
+- The axes use equal scale (all three axes share the same half-range) so the
+  geometry is not distorted; this is enforced manually because matplotlib 3D
+  has no built-in `axis('equal')`
+
+---
+
 ## Non-convergence display (Decision 23)
 
 When a condition is skipped due to non-convergence:
