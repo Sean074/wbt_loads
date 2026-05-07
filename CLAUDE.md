@@ -139,6 +139,40 @@ response is complete. Do not leave any of them stale.
 
 ---
 
+## Testing standard
+
+**pytest is mandatory** for all computation modules. Tests must be written
+alongside the code they cover — no computation module is considered complete
+without a corresponding test file in `tests/`.
+
+| Scope | Requirement |
+|---|---|
+| Computation modules (`src/*.py`) | `tests/test_<module>.py` for every module |
+| Test isolation | Tests must not import `menu.py`, `ui.py`, or `main.py` |
+| Coverage | Every public function must have at least one test |
+| Fixtures | Use minimal in-code data only; never depend on production data files |
+
+Test files are named `tests/test_<module>.py` and mirror the module structure
+in `src/`. The `tests/` directory lives at the project root alongside `src/`.
+
+Run the full suite with:
+
+```
+pytest tests/
+```
+
+**On code review:** whenever a computation module is modified or reviewed, its
+corresponding test file must be reassessed and updated to reflect the current
+implementation. A code change that is not accompanied by a test review is
+incomplete. This includes: adding tests for new functions, updating tests whose
+expected values have changed, and removing tests for deleted functions.
+
+The `dev_plan.md` acceptance criteria for every step includes passing its
+corresponding pytest file. Step 14 (integration test) verifies the full suite
+passes before Phase 1 is considered shippable.
+
+---
+
 ## Development step approval
 
 **Every development step — including all sub-steps, refactors, and documentation

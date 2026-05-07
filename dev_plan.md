@@ -16,14 +16,15 @@
 - `src/mass_model.py` — NASTRAN CONM2 parser (small-field + free-field)
 - `src/condition.py` — condition CSV parser for types A–E, degree→radian conversion
 - `src/lra.py` — LRA loader, `resolve_position`, `sum_to_lra`
-- `ui.show_lra_3d` — 3D matplotlib viewer for LRA spine and unit normals
-  (invoked from "L — View LRA" after the station table)
+- `ui.show_lra_3d` — 3D Plotly viewer for LRA spine and unit normals
+  (invoked from "L — View LRA" after the station table; opens in browser)
 - `src/unit_convert.py` — conversion constants
 - `src/config.py` — config loader
 - `data/lra/` — four surface LRA JSON files (wing, htail, vtail, fuselage)
 - `data/conditions/static_flight/sfl_sample.csv` — sample Category A conditions
 
 ### Not yet built
+- `tests/` — pytest test files for all computation modules (none yet written)
 - `src/trim.py` — full 3-equation pitch balance trim solver
 - `src/ground.py` — Categories C and D ground loads
 - `src/gust.py` — Category B gust loads (discrete static equivalent + 2-DOF PSD)
@@ -84,11 +85,16 @@ Solve variables: `alpha_rad`, `delta_e_rad`, `t_thrust_n` using
 
 **Allowed imports:** `atmos`, `aero_db`, `numpy`, `scipy`, `unit_convert`, `config`
 
+**Tests:** `tests/test_trim.py`
+- Convergence test: C001 inputs → `converged=True`, residuals < `trim_tol`.
+- Non-convergence test: out-of-range alpha → `ValueError` raised.
+
 **Acceptance criteria:**
 - For the C001 condition in `sfl_sample.csv` the solver converges (returns
   `converged=True`) and residuals are below `trim_tol`.
 - Raises `ValueError` for a condition designed to be outside the aero database
   alpha range.
+- `pytest tests/test_trim.py` passes with no failures.
 
 **Dependencies:** `atmos`, `aero_db`, `lra` (none from Step 0 — these are all
 already implemented).
@@ -134,12 +140,17 @@ def compute_ground_loads(
     """
 ```
 
+**Tests:** `tests/test_loads.py`
+- `compute_flight_loads`: root `mx_nm` < 0 for C001 2.5 g case (Lomax sign).
+- `ult_n6 = total_n6 × fos_nd` elementwise for a known input.
+
 **Acceptance criteria:**
 - `compute_flight_loads` applied to C001 trim state produces a non-zero
   section load array where the root bending moment `mx_nm` at the innermost
   LRA wing station is negative (upward bending under lift loading per Lomax
   sign convention).
 - `ult_n6 = total_n6 × fos_nd` exactly.
+- `pytest tests/test_loads.py` passes with no failures.
 
 **Dependencies:** Step 1 (trim state dict structure).
 
@@ -195,11 +206,16 @@ GID = 1-based LRA station index matching the surface JSON file order.
 
 **Allowed imports:** `lra`, `unit_convert`, stdlib (`pathlib`, `io`, `datetime`)
 
+**Tests:** `tests/test_nastran_out.py`
+- `.dat` output parses as valid NASTRAN free-field; SIDs 1, 2, 10001, 10002 present.
+- VMT CSV has correct headers and row count = n_stations × n_conditions.
+
 **Acceptance criteria:**
 - Output `.dat` file for two conditions parses as valid NASTRAN free-field
   with the correct SID values (1 and 2 for limit; 10001 and 10002 for ultimate).
 - VMT CSV contains correct column headers and one row per LRA station per
   condition.
+- `pytest tests/test_nastran_out.py` passes with no failures.
 
 **Dependencies:** Step 2 (result dict keys).
 
@@ -234,11 +250,16 @@ the full batch loop.
   these as symmetric trim with a logged informational note that dynamic
   increments are pending.
 
+**Tests:** `tests/test_menu_sfl.py`
+- End-to-end SFL batch with `sfl_sample.csv` writes `.dat` and returns OK for each condition.
+- Injected non-convergence condition appears as SKIP and is absent from NASTRAN output.
+
 **Acceptance criteria:**
 - Running option A with `sfl_sample.csv` and the sample aero + mass + LRA files
   completes without error and writes one `.dat` file per condition.
 - Non-convergent condition (artificially inject one) shows SKIP in the batch
   summary and is absent from the NASTRAN output.
+- `pytest tests/test_menu_sfl.py` passes with no failures.
 
 **Dependencies:** Steps 1, 2, 3.
 
@@ -290,12 +311,17 @@ Reads `nz_bump_nd` or `nx_nd` directly from the condition row; no gear energy fo
 **Must not import:** `aero_db`, `trim`, `maneuver`, `gust`, `loads`,
 `aeroelastic`, `beam`.
 
+**Tests:** `tests/test_ground.py`
+- `compute_landing_loads`: known inputs → `f_gear_n` ≈ 677 kN, `nz_eff_nd` ≈ 1.53.
+- `compute_static_ground_loads` braked-roll: `applied_forces_n` non-zero.
+
 **Acceptance criteria:**
 - `compute_landing_loads` with `v_sink_m_s=3.05`, `d_stroke_m=0.4`,
   `eta_gear_nd=0.80`, `m_ac_kg=45000` returns `f_gear_n` ≈ 677 kN
   and `nz_eff_nd` ≈ 1.53 (calculated analytically).
 - `compute_static_ground_loads` with `maneuver_type='braked_roll'` returns a
   non-zero `applied_forces_n`.
+- `pytest tests/test_ground.py` passes with no failures.
 
 **Dependencies:** `mass_model` (already done), `unit_convert`, `config`.
 
@@ -318,9 +344,13 @@ Sums applied forces (`applied_forces_n` at `attach_positions_m`) plus inertia
 forces (from `mass_data` at `nz_nd`, `nx_nd`, `ny_nd`) to LRA section cuts via
 `lra.sum_to_lra`. Returns the same dict structure as `compute_flight_loads`.
 
+**Tests:** extend `tests/test_loads.py`
+- Braked-roll ground state → non-zero `mx_nm` at wing root station.
+
 **Acceptance criteria:**
 - Running a braked-roll ground state through `compute_ground_loads` produces a
   non-zero `mx_nm` at the wing root station.
+- `pytest tests/test_loads.py` passes with no failures.
 
 **Dependencies:** Step 5.
 
@@ -335,9 +365,13 @@ forces (from `mass_data` at `nz_nd`, `nx_nd`, `ny_nd`) to LRA section cuts via
   pattern as `handle_sfl()` using `ground.compute_static_ground_loads` and
   `loads.compute_ground_loads`.
 
+**Tests:** `tests/test_menu_sgl.py`
+- SGL batch with `sgl_sample.csv` writes `.dat`; all conditions OK.
+
 **Acceptance criteria:**
 - Running option C with `sgl_sample.csv` writes a `.dat` file; batch summary
   shows all conditions OK.
+- `pytest tests/test_menu_sgl.py` passes with no failures.
 
 **Dependencies:** Steps 3, 5, 6.
 
@@ -352,8 +386,12 @@ forces (from `mass_data` at `nz_nd`, `nx_nd`, `ny_nd`) to LRA section cuts via
   each gear (consistent with the mass model CG).
 - Updated `menu.py:handle_dgl()`.
 
+**Tests:** `tests/test_menu_dgl.py`
+- DGL batch with `dgl_sample.csv` writes valid NASTRAN output; all conditions OK.
+
 **Acceptance criteria:**
 - Running option D with `dgl_sample.csv` completes and writes valid NASTRAN output.
+- `pytest tests/test_menu_dgl.py` passes with no failures.
 
 **Dependencies:** Steps 3, 5, 6.
 
@@ -421,11 +459,16 @@ Route: `maneuver_type == 'continuous_turbulence'`.
 **Allowed imports:** `atmos`, `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`,
 `unit_convert`, `config`
 
+**Tests:** `tests/test_gust.py`
+- Discrete gust: Lomax §4 known inputs → `delta_nz_nd` within 1% of published value.
+- Continuous turbulence: `omega_sp_rad_s > 0`, `0 < zeta_sp_nd < 1`.
+
 **Acceptance criteria:**
 - `compute_discrete_gust` with a known set of inputs (from Lomax §4 example)
   matches the published `delta_nz_nd` to within 1%.
 - `compute_continuous_turbulence` returns `omega_sp_rad_s > 0` and
   `zeta_sp_nd` between 0 and 1 for a representative aircraft.
+- `pytest tests/test_gust.py` passes with no failures.
 
 **Dependencies:** Step 1 (trim state dict), `atmos`, `aero_db`, `mass_model`.
 
@@ -474,10 +517,15 @@ LRA station.
 **Allowed imports:** `atmos`, `aero_db`, `mass_model`, `lra`, `trim`, `numpy`,
 `scipy`, `unit_convert`
 
+**Tests:** `tests/test_maneuver.py`
+- Symmetric pull-up: max `nz_nd` at peak of maneuver profile.
+- Critical instant section loads > trim loads for 2.5 g pull-up.
+
 **Acceptance criteria:**
 - `symmetric_pullup` returns maximum `nz_nd` at the correct time (peak of
   maneuver profile).
 - Section loads at the critical instant exceed the trim loads for a 2.5g pull-up.
+- `pytest tests/test_maneuver.py` passes with no failures.
 
 **Dependencies:** Step 1 (trim state as initial condition), `aero_db`, `lra`.
 
@@ -496,9 +544,13 @@ LRA station.
     `loads.compute_flight_loads` using the limit load factors
   - maneuver types → `maneuver.integrate_maneuver` → use critical instant loads
 
+**Tests:** `tests/test_menu_dfl.py`
+- DFL batch with `dfl_sample.csv` writes valid NASTRAN output for all rows.
+
 **Acceptance criteria:**
 - Running option B with `dfl_sample.csv` completes and writes valid NASTRAN output
   for all rows.
+- `pytest tests/test_menu_dfl.py` passes with no failures.
 
 **Dependencies:** Steps 1, 2, 3, 9, 10.
 
@@ -576,6 +628,11 @@ In `handle_sfl()`, if a beam model file is provided:
 - Catch `ValueError` (control reversal): print `[red]Error: ...[/red]` and skip
   that condition without writing output.
 
+**Tests:** `tests/test_beam.py`, `tests/test_aeroelastic.py`, `tests/test_aero_trim.py`
+- Zero `f_flex`: `apply_corrections` returns rigid baseline loads unchanged.
+- Non-zero `f_flex`: section loads differ from rigid by predictable amount.
+- Negative `e_flex_nd`: `ValueError` raised; condition skipped in SFL batch.
+
 **Acceptance criteria:**
 - With `f_flex = zeros` (rigid), `aeroelastic.apply_corrections` returns the same
   loads as the rigid baseline.
@@ -583,6 +640,7 @@ In `handle_sfl()`, if a beam model file is provided:
   amount.
 - A negative `e_flex_nd` triggers the `ValueError` and causes the condition to be
   skipped in the SFL batch.
+- `pytest tests/test_beam.py tests/test_aeroelastic.py tests/test_aero_trim.py` passes.
 
 **Dependencies:** Steps 1, 2, 4.
 
@@ -632,6 +690,9 @@ python tools/plot_vmt.py --file <path_to_VMT.csv>
 - All four Phase 1 analysis menu options (A, B, C, D) complete without unhandled
   exceptions on their respective sample data files.
 - No `doc/` file is inconsistent with the current codebase.
+- `pytest tests/` passes with zero failures — all test files from Steps 1–13 included.
+- Every public function in `src/` has at least one test; any gap found in this
+  step must be closed before Step 14 is complete.
 
 **Dependencies:** Steps 1–13.
 

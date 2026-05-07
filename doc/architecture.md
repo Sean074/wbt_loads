@@ -137,6 +137,26 @@ wbt_loads/
 │   ├── loads_aero_db.md     # Aerodynamic database file format and interpolation method
 │   └── ui.md                # TUI code standards
 │
+├── tests/                   # pytest test suite — one file per src/ module
+│   ├── test_atmos.py        #   US Std Atm 1976 — temperature, pressure, density
+│   ├── test_aero_db.py      #   interpolation, Prandtl-Glauert, increment tables
+│   ├── test_mass_model.py   #   CONM2 parser
+│   ├── test_condition.py    #   CSV parser, column validation, unit conversion
+│   ├── test_lra.py          #   LRA loader, resolve_position, sum_to_lra
+│   ├── test_loads.py        #   compute_aero_vmt, compute_inertia_vmt, flight+ground
+│   ├── test_trim.py         #   solve_trim convergence and non-convergence
+│   ├── test_gust.py         #   discrete gust and PSD continuous turbulence
+│   ├── test_maneuver.py     #   ODE integration, critical instant extraction
+│   ├── test_ground.py       #   landing, static ground, taxi/braking
+│   ├── test_nastran_out.py  #   FORCE/MOMENT card format, VMT CSV, summary
+│   ├── test_beam.py         #   BDF parse, stiffness assembly, flexibility matrix
+│   ├── test_aeroelastic.py  #   apply_corrections, jig shape, control reversal
+│   ├── test_aero_trim.py    #   coupled trim loop convergence
+│   ├── test_menu_sfl.py     #   end-to-end Category A batch
+│   ├── test_menu_dfl.py     #   end-to-end Category B batch
+│   ├── test_menu_sgl.py     #   end-to-end Category C batch
+│   └── test_menu_dgl.py     #   end-to-end Category D batch
+│
 ├── tools/                   # Standalone scripts; not imported by the app
 │
 ├── WBT_Loads.md             # Project specification
@@ -852,6 +872,49 @@ interactively from the TUI "Review cases" menu item, which calls
 from `src/ui.py`. The two paths are independent implementations of the same
 analysis; `tools/plot_vmt.py` does not import `src/ui.py` or any other
 application module.
+
+---
+
+## Testing
+
+The project uses **pytest** for all automated testing. The `tests/` directory
+mirrors the `src/` structure: one `test_<module>.py` file per computation module.
+
+### Scope rules
+
+| Layer | Test requirement |
+|---|---|
+| Computation modules (`src/`) | Full pytest coverage — every public function has at least one test |
+| Presentation layer (`ui.py`, `menu.py`, `main.py`) | End-to-end handler tests in `test_menu_*.py`; no direct UI unit tests |
+| Support modules (`unit_convert.py`, `config.py`) | Tested implicitly via computation module tests |
+| Tools (`tools/`) | Optional — no mandatory tests |
+
+### Test isolation rules
+
+- Tests must not import `menu.py`, `ui.py`, or `main.py`.
+- Tests must not depend on production data files in `data/`; all test fixtures
+  use minimal in-code data (small numpy arrays, inline dicts).
+- Tests must not write to `data/outputs/`; use `tmp_path` (pytest fixture) for
+  any file output tests.
+
+### Code review requirement
+
+When any computation module is modified, its test file must be reviewed and
+updated in the same change. This includes:
+- Adding tests for new public functions.
+- Updating expected values where implementation has changed.
+- Removing tests for deleted functions.
+
+A module change without a test review is considered incomplete.
+
+### Running the suite
+
+```
+pytest tests/
+```
+
+Step 14 of the development plan requires the full suite to pass with zero
+failures before Phase 1 is considered shippable.
 
 ---
 
