@@ -12,7 +12,7 @@ CATEGORY_LABELS = {
     "B": "Dynamic Flight Loads (DFL)",
     "C": "Static Ground Loads (SGL)",
     "D": "Dynamic Ground Loads (DGL)",
-    "E": "Flap / High-Lift Loads (FLAPS)",
+    "E": "Flap / High-Lift Loads (FLAPS) — Phase 2 — deferred",
     "F": "Control Surface Loads (CONTROLS) — Phase 2 — deferred",
 }
 
@@ -65,22 +65,22 @@ def select_analysis_type() -> str:
     tbl.add_column("Category")
 
     for key, label in CATEGORY_LABELS.items():
-        if key == "F":
+        if key in ("E", "F"):
             tbl.add_row(key, f"[dim]{label}[/dim]")
         else:
             tbl.add_row(key, label)
 
     console.print(Panel(tbl, title="[bold]Analysis Categories[/bold]", border_style="cyan"))
 
-    valid = set("ABCDE")
+    valid = set("ABCD")
     while True:
         raw = pt_prompt("Select category: ").strip().upper()
-        if raw == "F":
-            console.print("[dim]Category F is deferred to Phase 2.[/dim]")
+        if raw in ("E", "F"):
+            console.print(f"[dim]Category {raw} is deferred to Phase 2.[/dim]")
             continue
         if raw in valid:
             return raw
-        console.print("[red]Invalid selection. Enter A, B, C, D, or E.[/red]")
+        console.print("[red]Invalid selection. Enter A, B, C, or D.[/red]")
 
 
 def print_config(app_config: dict) -> None:

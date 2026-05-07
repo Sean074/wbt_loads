@@ -60,8 +60,8 @@ def handle_dgl() -> None:
     ui.press_enter_to_continue()
 
 
-def handle_flaps() -> None:
-    ui.console.print("[cyan]Flap / High-Lift Loads (FLAPS) — not yet implemented.[/cyan]")
+def handle_flaps_deferred() -> None:
+    ui.console.print("[dim]Flap / High-Lift Loads (FLAPS) is deferred to Phase 2.[/dim]")
     ui.press_enter_to_continue()
 
 

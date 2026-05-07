@@ -66,7 +66,7 @@ and why the structure is organised the way it is.
 │    ├── dynamic_flight/ — Category B CSVs           │
 │    ├── static_ground/  — Category C CSVs           │
 │    ├── dynamic_ground/ — Category D CSVs           │
-│    ├── flap/           — Category E — Flap/High-Lift│
+│    ├── flap/           — Category E (Phase 2)       │
 │    └── control_surface/— Category F (Phase 2)      │
 │  data/outputs/    — generated results              │
 │    ├── <ac_id>_<cycle_id>_<case_id>.dat            │
@@ -122,7 +122,7 @@ wbt_loads/
 │   │   ├── dynamic_flight/  #   Category B — dynamic flight loads / gust
 │   │   ├── static_ground/   #   Category C — static ground handling
 │   │   ├── dynamic_ground/  #   Category D — landing and dynamic ground
-│   │   ├── flap/            #   Category E — flap / high-lift loads
+│   │   ├── flap/            #   Category E — flap / high-lift loads (Phase 2; empty)
 │   │   └── control_surface/ #   Category F — control surface loads (Phase 2; empty)
 │   ├── outputs/             # Generated runtime artifacts (not committed)
 │   └── data_summary.json    # Provenance: data source, analyst, analysis intent
@@ -579,9 +579,8 @@ Each analysis category dispatches to computation modules based on
 | C SGL | `braked_roll`, `ground_turn`, `nose_wheel_yaw`, `towing`, `pivoting`, `jacking` | `ground.compute_static_ground_loads` → `loads.compute_ground_loads` |
 | D.1 Landing | `level_landing`, `tail_down_landing`, `one_gear_landing`, `lateral_drift`, `rebound_landing` | `ground.compute_landing_loads` → `loads.compute_ground_loads` |
 | D.2 Taxi/Braking | `taxi_bump`, `rough_runway`, `abrupt_braking` | `ground.compute_taxi_braking_loads` → `loads.compute_ground_loads` |
-| E FLAPS maneuver | `symmetric_pullup`, `pushover` | `trim` → `loads.compute_flight_loads` (flap tables active) |
-| E FLAPS gust | `high_lift_gust` | `gust` → `loads.compute_flight_loads` (flap tables active) |
-| F CONTROLS | *(all)* | deferred — `_handle_controls_deferred` raises `NotImplementedError` |
+| E FLAPS | *(all)* | deferred — `_handle_flaps_deferred` shows Phase 2 message |
+| F CONTROLS | *(all)* | deferred — `_handle_controls_deferred` shows Phase 2 message |
 
 The `menu.py` top-level handler dict and per-category dispatch dicts are the
 single authoritative routing implementation; they must match this table exactly.

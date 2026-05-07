@@ -414,7 +414,7 @@ infrastructure support all categories. Each is described below.
 | B — Dynamic Flight Loads | DFL | B.1 PSD (continuous turbulence), B.2 TDG (discrete gust) | §b | 1 (both Phase 1 simplified); 2 (DLM, 1-cosine TDG) |
 | C — Static Ground Loads | SGL | — | §c | 1 |
 | D — Dynamic Ground Loads | DGL | D.1 Landing, D.2 Taxi/Braking | §d | 1 (quasi-static); 2 (dynamic gear) |
-| E — Flap / High-Lift Loads | FLAPS | — | §e | 1 |
+| E — Flap / High-Lift Loads | FLAPS | — | §e | 2 (deferred) |
 | F — Control Surface Loads | CONTROLS | — | §f | 2 (deferred) |
 
 All equations use SI quantities throughout.
@@ -885,7 +885,12 @@ airframe section loads. Critical loads are the extrema over the time history.
 
 ---
 
-### e) Flap / high-lift loads
+### e) Flap / high-lift loads (deferred — Phase 2)
+
+**Status:** Deferred to Phase 2. No analysis code or CSV schema is defined in
+Phase 1. The Category E slot is reserved in the TUI and `data/conditions/flap/`
+directory is created but remains empty. This section is the design specification
+for the Phase 2 implementation.
 
 **Regulatory basis:**
 

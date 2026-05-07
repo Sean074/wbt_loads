@@ -1,0 +1,673 @@
+# WBT Loads — Development Plan
+
+## Current state (as of 2026-05-07)
+
+### Implemented and complete
+- `main.py` — entry point, menu loop, handler dispatch
+- `src/ui.py` — full TUI display and prompt helpers
+- `src/menu.py` — menu structure, all five pre-analysis checks (aero review,
+  mass review, VMT state, rigid trim check, inertia VMT); SFL handler loads
+  conditions but has no computation; DFL/SGL/DGL/FLAPS handlers are stubs
+- `src/atmos.py` — US Standard Atmosphere 1976
+- `src/aero_db.py` — aerodynamic database loader, 4-D/5-D interpolators,
+  Prandtl-Glauert extrapolation, increment tables
+- `src/loads.py` — strip-to-LRA integration (`compute_aero_vmt`,
+  `compute_inertia_vmt`, `compute_integrated_totals`), rigid alpha trim bisection
+- `src/mass_model.py` — NASTRAN CONM2 parser (small-field + free-field)
+- `src/condition.py` — condition CSV parser for types A–E, degree→radian conversion
+- `src/lra.py` — LRA loader, `resolve_position`, `sum_to_lra`
+- `src/unit_convert.py` — conversion constants
+- `src/config.py` — config loader
+- `data/lra/` — four surface LRA JSON files (wing, htail, vtail, fuselage)
+- `data/conditions/static_flight/sfl_sample.csv` — sample Category A conditions
+
+### Not yet built
+- `src/trim.py` — full 3-equation pitch balance trim solver
+- `src/ground.py` — Categories C and D ground loads
+- `src/gust.py` — Category B gust loads (discrete static equivalent + 2-DOF PSD)
+- `src/maneuver.py` — Category B maneuver time history (ODE integration)
+- `src/aeroelastic.py` — aeroelastic corrections and jig shape
+- `src/beam.py` — sbeam BDF parser and modal ROM
+- `src/aero_trim.py` — coupled aeroelastic trim loop
+- `src/nastran_out.py` — NASTRAN FORCE/MOMENT card writer, VMT CSV, summary
+- `loads.compute_flight_loads()` and `loads.compute_ground_loads()` — combined
+  aero + inertia pipelines with fos_nd applied to produce ultimate loads
+- Completed `handle_sfl()` (computation wired), `handle_dfl()`, `handle_sgl()`,
+  `handle_dgl()`, `handle_flaps()` in `menu.py`
+- Sample data files: condition CSVs for categories B, C, D, E; mass model; aero files
+- `tools/plot_vmt.py` — standalone VMT chart script
+
+---
+
+## Step-by-step plan
+
+Each step lists the deliverable, the files to write or modify, acceptance
+criteria, and dependencies on earlier steps.
+
+---
+
+### Step 1 — `src/trim.py`: full 3-equation pitch balance trim solver
+
+**Deliverable:** `src/trim.py` with one public function `solve_trim()`.
+
+**Function signature:**
+```python
+def solve_trim(
+    h_m: float,
+    v_eas_m_s: float,
+    nz_nd: float,
+    x_cg_m: float,
+    m_ac_kg: float,
+    s_ref_m2: float,
+    mac_m: float,
+    aero_db_data: dict,
+) -> dict:
+    """Solve for alpha_rad, delta_e_rad, t_thrust_n.
+
+    Returns dict with keys: alpha_rad, delta_e_rad, t_thrust_n,
+    cl_nd, cd_nd, cm_nd, q_dyn_pa, mach_nd, converged, residuals.
+    Raises ValueError('trim_no_converge') when scipy.optimize.root fails.
+    """
+```
+
+**Equilibrium system (all SI, structural frame):**
+```
+F1: L − nz × W = 0        L = CL × q × S_ref
+F2: ΣM_pitch_cg = 0        Cm_cg = Cm_c4 + CL × (x_cg − x_ac) / mac
+F3: T − D = 0              T = D (thrust equals drag; thrust axis assumed axial)
+```
+
+Solve variables: `alpha_rad`, `delta_e_rad`, `t_thrust_n` using
+`scipy.optimize.root` (method `'hybr'`) with tolerance `APP_CONFIG["trim_tol"]`.
+
+**Allowed imports:** `atmos`, `aero_db`, `numpy`, `scipy`, `unit_convert`, `config`
+
+**Acceptance criteria:**
+- For the C001 condition in `sfl_sample.csv` the solver converges (returns
+  `converged=True`) and residuals are below `trim_tol`.
+- Raises `ValueError` for a condition designed to be outside the aero database
+  alpha range.
+
+**Dependencies:** `atmos`, `aero_db`, `lra` (none from Step 0 — these are all
+already implemented).
+
+---
+
+### Step 2 — `loads.compute_flight_loads()` and `loads.compute_ground_loads()`
+
+**Deliverable:** Two new public functions added to `src/loads.py`.
+
+```python
+def compute_flight_loads(
+    trim_state: dict,
+    aero_db_data: dict,
+    mass_data: dict,
+    stations: list,
+    fos_nd: float,
+    deflections_rad: dict | None = None,
+) -> dict:
+    """
+    Combined aero + inertia summation to LRA, scaled to ultimate loads.
+
+    Returns dict with keys:
+        'aero_n6'     : ndarray (N, 6) — aerodynamic section loads (limit)
+        'inertia_n6'  : ndarray (N, 6) — inertia section loads (limit)
+        'total_n6'    : ndarray (N, 6) — total limit loads
+        'ult_n6'      : ndarray (N, 6) — total ultimate loads (limit × fos_nd)
+        'fos_nd'      : float
+        'pg_applied'  : bool — True if Prandtl-Glauert was used
+    """
+
+def compute_ground_loads(
+    ground_state: dict,
+    mass_data: dict,
+    stations: list,
+    fos_nd: float,
+) -> dict:
+    """
+    Sum applied + inertia loads for a ground condition to LRA.
+
+    ground_state is the dict returned by ground.py functions.
+    Returns dict with same keys as compute_flight_loads().
+    """
+```
+
+**Acceptance criteria:**
+- `compute_flight_loads` applied to C001 trim state produces a non-zero
+  section load array where the root bending moment `mx_nm` at the innermost
+  LRA wing station is negative (upward bending under lift loading per Lomax
+  sign convention).
+- `ult_n6 = total_n6 × fos_nd` exactly.
+
+**Dependencies:** Step 1 (trim state dict structure).
+
+---
+
+### Step 3 — `src/nastran_out.py`: NASTRAN FORCE/MOMENT card writer
+
+**Deliverable:** `src/nastran_out.py` with three public functions.
+
+```python
+def write_load_case(
+    aircraft_id: str,
+    load_cycle_id: str,
+    load_case_id: str,
+    results: list[dict],
+    stations_by_surface: dict,
+    data_root: Path,
+) -> Path:
+    """
+    Write one <aircraft_id>_<load_cycle_id>_<load_case_id>.dat file.
+
+    results: list of per-surface result dicts from compute_flight_loads().
+    stations_by_surface: {surface_tag: stations_list} from lra.build_lra().
+    Returns path to the written file.
+    """
+
+def write_vmt_csv(
+    aircraft_id: str,
+    load_cycle_id: str,
+    surface: str,
+    condition_ids: list[str],
+    section_loads: np.ndarray,
+    stations: list,
+    data_root: Path,
+) -> Path:
+    """Write <aircraft_id>_<load_cycle_id>_<surface>_VMT.csv."""
+
+def write_analysis_summary(
+    input_manifest: list[dict],
+    data_root: Path,
+) -> Path:
+    """Write analysis_summary_<YYYYMMDD>.out with path + mtime for each input."""
+```
+
+**FORCE card format (free-field):**
+`FORCE, SID, GID, 0, 1.0, vx_n, fy_n, vz_n`
+
+**MOMENT card format (free-field):**
+`MOMENT, SID, GID, 0, 1.0, mx_nm, my_nm, mz_nm`
+
+SID = condition sequence number (1-based); ultimate block SID += 10000 × n_cond.
+GID = 1-based LRA station index matching the surface JSON file order.
+
+**Allowed imports:** `lra`, `unit_convert`, stdlib (`pathlib`, `io`, `datetime`)
+
+**Acceptance criteria:**
+- Output `.dat` file for two conditions parses as valid NASTRAN free-field
+  with the correct SID values (1 and 2 for limit; 10001 and 10002 for ultimate).
+- VMT CSV contains correct column headers and one row per LRA station per
+  condition.
+
+**Dependencies:** Step 2 (result dict keys).
+
+---
+
+### Step 4 — Complete `handle_sfl()`: Category A static flight loads
+
+**Deliverable:** Replace the computation stub in `menu.py:handle_sfl()` with
+the full batch loop.
+
+**Sequence inside the handler:**
+1. Load conditions CSV (`condition.load_conditions(csv_path, "A")`).
+2. Prompt for aero DB file, mass model file, LRA file,
+   `s_ref_m2`, `mac_m`, and `load_cycle_id`.
+3. Load `aero_db_data`, `mass_data`, `lra_data`.
+4. For each condition row:
+   a. Call `trim.solve_trim(...)`.
+   b. On `ValueError` (non-convergence): print yellow warning, append SKIP to
+      batch summary, continue.
+   c. Call `loads.compute_flight_loads(...)`.
+   d. Call `nastran_out.write_load_case(...)`.
+   e. Append OK to batch summary.
+5. Call `nastran_out.write_analysis_summary(...)` after the batch.
+6. Display batch summary table via `ui.print_batch_summary(...)` (add this
+   function to `ui.py` if not present).
+7. `ui.press_enter_to_continue()`.
+
+**Maneuver type routing for Category A (all static balanced):**
+- `symmetric_pullup` / `push_over` → trim with `nz_nd` from condition row.
+- `rolling_pullout` / `yaw` → trim is the same equilibrium; roll/yaw rate
+  increments will be added once `maneuver.py` exists (Step 10). For now, treat
+  these as symmetric trim with a logged informational note that dynamic
+  increments are pending.
+
+**Acceptance criteria:**
+- Running option A with `sfl_sample.csv` and the sample aero + mass + LRA files
+  completes without error and writes one `.dat` file per condition.
+- Non-convergent condition (artificially inject one) shows SKIP in the batch
+  summary and is absent from the NASTRAN output.
+
+**Dependencies:** Steps 1, 2, 3.
+
+---
+
+### Step 5 — `src/ground.py`: Categories C and D ground loads
+
+**Deliverable:** `src/ground.py` with three public functions returning a state dict.
+
+```python
+def compute_static_ground_loads(condition_row, mass_data: dict) -> dict: ...
+def compute_landing_loads(condition_row, mass_data: dict) -> dict: ...
+def compute_taxi_braking_loads(condition_row, mass_data: dict) -> dict: ...
+```
+
+**State dict keys (all three functions):**
+`applied_forces_n` (ndarray n_attach × 3), `attach_positions_m` (ndarray n_attach × 3),
+`nz_nd`, `nx_nd`, `ny_nd`, `condition_id`.
+
+**Category C — static ground handling (`compute_static_ground_loads`):**
+
+| `maneuver_type` | Applied load |
+|---|---|
+| `braked_roll` | `t_brake_nm = mu_brake_nd × n_gear_n × r_wheel_m` — drag moment at main gear attach |
+| `ground_turn` | Centrifugal = `m_ac_kg × v_ground_m_s² / r_turn_m` lateral at CG |
+| `nose_wheel_yaw` | Lateral side force at nose gear attach point |
+| `towing` | Tow force vector at tow fitting (magnitude and angle from condition row) |
+| `pivoting` | Friction at one main gear (fixed pivot); condition row supplies gear ID |
+| `jacking` | Vertical jack load at each jack point from condition row |
+
+Ground reactions are balanced by inertia at CG (`nx_nd`, `ny_nd`, `nz_nd` from
+the condition row; no aero contribution).
+
+**Category D.1 — landing (`compute_landing_loads`):**
+
+Peak gear reaction per FAR 25.473 reserve energy:
+```python
+f_gear_n = w_aircraft_n * eta_gear_nd * (1 + v_sink_m_s**2 / (2 * G_M_S2 * d_stroke_m))
+nz_eff_nd = f_gear_n / w_aircraft_n
+```
+Sub-case loads: level (2-pt), tail-down, one-gear (add 0.25 lateral), lateral
+drift (add 0.25 side load), rebound (gear extended; ground reaction = 0).
+
+**Category D.2 — taxi/braking (`compute_taxi_braking_loads`):**
+Reads `nz_bump_nd` or `nx_nd` directly from the condition row; no gear energy formula.
+
+**Allowed imports:** `mass_model`, `lra`, `numpy`, `unit_convert`, `config`
+
+**Must not import:** `aero_db`, `trim`, `maneuver`, `gust`, `loads`,
+`aeroelastic`, `beam`.
+
+**Acceptance criteria:**
+- `compute_landing_loads` with `v_sink_m_s=3.05`, `d_stroke_m=0.4`,
+  `eta_gear_nd=0.80`, `m_ac_kg=45000` returns `f_gear_n` ≈ 677 kN
+  and `nz_eff_nd` ≈ 1.53 (calculated analytically).
+- `compute_static_ground_loads` with `maneuver_type='braked_roll'` returns a
+  non-zero `applied_forces_n`.
+
+**Dependencies:** `mass_model` (already done), `unit_convert`, `config`.
+
+---
+
+### Step 6 — `loads.compute_ground_loads()`: ground case LRA summation
+
+**Deliverable:** Third combined summation function in `src/loads.py`.
+
+```python
+def compute_ground_loads(
+    ground_state: dict,
+    mass_data: dict,
+    stations: list,
+    fos_nd: float,
+) -> dict:
+```
+
+Sums applied forces (`applied_forces_n` at `attach_positions_m`) plus inertia
+forces (from `mass_data` at `nz_nd`, `nx_nd`, `ny_nd`) to LRA section cuts via
+`lra.sum_to_lra`. Returns the same dict structure as `compute_flight_loads`.
+
+**Acceptance criteria:**
+- Running a braked-roll ground state through `compute_ground_loads` produces a
+  non-zero `mx_nm` at the wing root station.
+
+**Dependencies:** Step 5.
+
+---
+
+### Step 7 — Sample data and complete `handle_sgl()`: Category C
+
+**Deliverable:**
+- `data/conditions/static_ground/sgl_sample.csv` — at least 3 rows covering
+  `braked_roll`, `ground_turn`, `nose_wheel_yaw`.
+- Updated `menu.py:handle_sgl()` — follows the same input→analysis→output
+  pattern as `handle_sfl()` using `ground.compute_static_ground_loads` and
+  `loads.compute_ground_loads`.
+
+**Acceptance criteria:**
+- Running option C with `sgl_sample.csv` writes a `.dat` file; batch summary
+  shows all conditions OK.
+
+**Dependencies:** Steps 3, 5, 6.
+
+---
+
+### Step 8 — Sample data and complete `handle_dgl()`: Category D
+
+**Deliverable:**
+- `data/conditions/dynamic_ground/dgl_sample.csv` — rows covering
+  `level_landing`, `tail_down_landing`, `taxi_bump`.
+- `data/gear/gear_properties.json` — gear stroke, efficiency, wheel radius for
+  each gear (consistent with the mass model CG).
+- Updated `menu.py:handle_dgl()`.
+
+**Acceptance criteria:**
+- Running option D with `dgl_sample.csv` completes and writes valid NASTRAN output.
+
+**Dependencies:** Steps 3, 5, 6.
+
+---
+
+### Step 9 — `src/gust.py`: Category B gust loads (Phase 1)
+
+**Deliverable:** `src/gust.py` with two public functions.
+
+```python
+def compute_discrete_gust(
+    trim_state: dict,
+    condition_row,
+    aero_db_data: dict,
+    mass_data: dict,
+    s_ref_m2: float,
+    mac_m: float,
+) -> dict:
+    """
+    Phase 1 static equivalent discrete gust per pre-Amendment 25-86 FAR Appendix G.
+
+    Returns dict with keys: delta_nz_nd, nz_pos_nd, nz_neg_nd, k_gust_nd,
+    mu_g_nd, u_gust_m_s, a_slope_nd.
+    """
+
+def compute_continuous_turbulence(
+    trim_state: dict,
+    condition_row,
+    aero_db_data: dict,
+    mass_data: dict,
+    s_ref_m2: float,
+    mac_m: float,
+) -> dict:
+    """
+    Phase 1 2-DOF rigid-body frequency-response PSD method per FAR 25.341(b)
+    and AC 25.341-1.
+
+    Returns dict with keys: sigma_nz_nd, sigma_my_nm, nz_limit_nd, my_limit_nm,
+    omega_sp_rad_s, zeta_sp_nd, h_nz_nd, h_my_nm, omega_rad_s.
+    """
+```
+
+**Discrete gust formulas (SI throughout):**
+```
+u_gust_m_s: linear interp 15.24 @ 0 m to 7.62 @ 6096 m
+mu_g_nd = 2 × m_ac_kg / (rho_kg_m3 × mac_m × s_ref_m2 × a_slope_nd)
+k_gust_nd = 0.88 × mu_g_nd / (5.3 + mu_g_nd)
+delta_nz_nd = (k_gust_nd × u_gust_m_s × v_eas_m_s × a_slope_nd)
+              / (2 × w_aircraft_n / s_ref_m2)
+nz_pos_nd = 1.0 + delta_nz_nd
+nz_neg_nd = 1.0 − delta_nz_nd
+```
+Route: `maneuver_type in {'discrete_gust_vertical', 'discrete_gust_lateral'}`.
+
+**Continuous turbulence (2-DOF frequency response):**
+- Assemble `M_sys`, `C_sys`, `K_sys` (2×2) from strip-theory derivatives.
+- Frequency grid: log-spaced 0.01–100 rad/s, ≥ 500 points.
+- Solve `(−ω²M + jωC + K)X = F_gust` at each ω for `h_nz_nd`, `h_my_nm`.
+- Von Kármán PSD with `l_turb_m = 762 m`, `sigma_w_m_s` from `APP_CONFIG`.
+- `sigma = sqrt(trapz(|H|² × phi, omega))`.
+- `nz_limit_nd = k_sigma_nd × sigma_nz_nd`; `k_sigma_nd` from `APP_CONFIG` (default 3.0).
+
+Route: `maneuver_type == 'continuous_turbulence'`.
+
+**Allowed imports:** `atmos`, `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`,
+`unit_convert`, `config`
+
+**Acceptance criteria:**
+- `compute_discrete_gust` with a known set of inputs (from Lomax §4 example)
+  matches the published `delta_nz_nd` to within 1%.
+- `compute_continuous_turbulence` returns `omega_sp_rad_s > 0` and
+  `zeta_sp_nd` between 0 and 1 for a representative aircraft.
+
+**Dependencies:** Step 1 (trim state dict), `atmos`, `aero_db`, `mass_model`.
+
+---
+
+### Step 10 — `src/maneuver.py`: Category B maneuver time history
+
+**Deliverable:** `src/maneuver.py` with one public function.
+
+```python
+def integrate_maneuver(
+    trim_state: dict,
+    condition_row,
+    aero_db_data: dict,
+    mass_data: dict,
+    stations: list,
+    s_ref_m2: float,
+    mac_m: float,
+) -> dict:
+    """
+    Integrate equations of motion for a prescribed maneuver.
+
+    Returns dict with keys: t_s (array), section_loads_n6 (array N_stations × 6 × N_time),
+    critical_pos_n6 (N_stations × 6), critical_neg_n6 (N_stations × 6).
+    """
+```
+
+**Supported `maneuver_type` values and governing DOF:**
+
+| Type | State vector | Notes |
+|---|---|---|
+| `symmetric_pullup` | `[alpha_rad, q_pitch_rad_s]` | FAR 25.331(b) |
+| `push_over` | `[alpha_rad, q_pitch_rad_s]` | FAR 25.331(b) |
+| `checked` | `[alpha_rad, q_pitch_rad_s]` | pitch rate reversal at peak nz |
+| `rolling_pullout` | `[alpha_rad, q_pitch_rad_s, p_roll_rad_s, phi_rad]` | FAR 25.349 |
+| `yaw` | `[beta_rad, r_yaw_rad_s]` with prescribed `delta_r_rad` input | FAR 25.351 |
+
+Integration via `scipy.integrate.solve_ivp`. At each time step:
+1. Interpolate strip loads at current state.
+2. Compute section loads via `loads.compute_aero_vmt` + inertia.
+3. Store section load arrays.
+
+Critical instant: `argmax`/`argmin` over the time axis per load component per
+LRA station.
+
+**Allowed imports:** `atmos`, `aero_db`, `mass_model`, `lra`, `trim`, `numpy`,
+`scipy`, `unit_convert`
+
+**Acceptance criteria:**
+- `symmetric_pullup` returns maximum `nz_nd` at the correct time (peak of
+  maneuver profile).
+- Section loads at the critical instant exceed the trim loads for a 2.5g pull-up.
+
+**Dependencies:** Step 1 (trim state as initial condition), `aero_db`, `lra`.
+
+---
+
+### Step 11 — Sample data and complete `handle_dfl()`: Category B
+
+**Deliverable:**
+- `data/conditions/dynamic_flight/dfl_sample.csv` — rows covering
+  `discrete_gust_vertical`, `discrete_gust_lateral`, `continuous_turbulence`,
+  `rolling_pullout`.
+- Updated `menu.py:handle_dfl()` — dispatches by `maneuver_type`:
+  - `discrete_gust_*` → `gust.compute_discrete_gust` → two conditions
+    (positive and negative increment) → `loads.compute_flight_loads`
+  - `continuous_turbulence` → `gust.compute_continuous_turbulence` →
+    `loads.compute_flight_loads` using the limit load factors
+  - maneuver types → `maneuver.integrate_maneuver` → use critical instant loads
+
+**Acceptance criteria:**
+- Running option B with `dfl_sample.csv` completes and writes valid NASTRAN output
+  for all rows.
+
+**Dependencies:** Steps 1, 2, 3, 9, 10.
+
+---
+
+### Step 12 — Aeroelastic stack (Phase 1 elastic corrections)
+
+This step adds structural flexibility corrections to the SFL handler. Three
+modules are built in sequence.
+
+#### 12a — `src/beam.py`: sbeam BDF interface
+
+```python
+def load_beam_model(bdf_path: Path) -> dict:
+    """Parse BDF, assemble K and M, solve modal ROM. Returns {K, M, modes, freqs_hz, f_flex}."""
+
+def get_flexibility(beam_model: dict) -> np.ndarray:
+    """Return truncated flexibility matrix F = Φ Λ⁻¹ Φᵀ."""
+```
+
+Uses sbeam library from `/Users/seanomeara/Documents/99-Tests/sbeam`.
+Imperial BDFs converted to SI at ingestion via `unit_convert`.
+
+**Allowed imports:** `sbeam`, `numpy`, `scipy`, `unit_convert`, `config`
+
+#### 12b — `src/aeroelastic.py`: corrections and jig shape
+
+```python
+def apply_corrections(
+    rigid_state: dict,
+    f_flex: np.ndarray,
+    aero_db_data: dict,
+    loads_n6: np.ndarray,
+    stations: list,
+) -> dict:
+    """
+    Apply one flexibility iteration: {δ} = [f_flex] × {P}.
+    Returns corrected section loads and aeroelastic effectiveness e_flex_nd per surface.
+    Raises ValueError('Control reversal: <surface> at condition <ID> (e_flex_nd = <value>)')
+    when e_flex_nd < 0.
+    """
+
+def compute_jig_shape(
+    cruise_trim_state: dict,
+    f_flex: np.ndarray,
+    baseline_loads_n6: np.ndarray,
+    stations: list,
+) -> np.ndarray:
+    """Return jig shape offsets [m] at each LRA station."""
+```
+
+**Allowed imports:** `aero_db`, `loads`, `lra`, `beam`, `numpy`, `scipy`
+
+#### 12c — `src/aero_trim.py`: coupled aeroelastic trim loop
+
+```python
+def solve(
+    h_m, v_eas_m_s, nz_nd, x_cg_m, m_ac_kg, s_ref_m2, mac_m,
+    aero_db_data, mass_data, stations, f_flex,
+) -> dict:
+    """
+    Iterate trim ↔ aeroelastic until section load change < APP_CONFIG['flex_tol'].
+    Returns flexible trim state with corrected section loads and e_flex_nd.
+    """
+```
+
+**Allowed imports:** `trim`, `aeroelastic`, `aero_db`, `lra`, `numpy`, `scipy`,
+`unit_convert`, `config`
+
+#### Wire into SFL handler
+
+In `handle_sfl()`, if a beam model file is provided:
+- Load `beam_model = beam.load_beam_model(bdf_path)`.
+- Use `aero_trim.solve(...)` instead of `trim.solve_trim(...)`.
+- Catch `ValueError` (control reversal): print `[red]Error: ...[/red]` and skip
+  that condition without writing output.
+
+**Acceptance criteria:**
+- With `f_flex = zeros` (rigid), `aeroelastic.apply_corrections` returns the same
+  loads as the rigid baseline.
+- With a non-zero `f_flex`, the section loads differ from rigid by a predictable
+  amount.
+- A negative `e_flex_nd` triggers the `ValueError` and causes the condition to be
+  skipped in the SFL batch.
+
+**Dependencies:** Steps 1, 2, 4.
+
+---
+
+### Step 13 — `tools/plot_vmt.py`: standalone VMT chart script
+
+**Deliverable:** `tools/plot_vmt.py` per `doc/architecture.md §tools/plot_vmt.py`.
+
+```
+python tools/plot_vmt.py --file <path_to_VMT.csv>
+                         [--conditions C001 C002 ...]
+                         [--surface wing]
+                         [--envelope <path_to_envelope.csv>]
+```
+
+- Reads VMT CSV(s) with `pandas`.
+- Plots `vz_n`, `mx_nm`, `my_nm` vs. spanwise station (`y_m`) using `matplotlib`.
+- Supports single-case, multi-condition overlay, and vs-envelope modes.
+- Calls `plt.show()` (blocking); no TUI output.
+- No WBT_LOADS application module imports; standalone (`matplotlib`, `pandas`,
+  `numpy` only).
+
+**Acceptance criteria:**
+- Running the script with a VMT CSV produced by Step 4 opens a three-panel figure
+  (Vz, Mx, My) without errors.
+
+**Dependencies:** Step 3 (VMT CSV format defined).
+
+---
+
+### Step 14 — Integration test pass and documentation update
+
+**Deliverable:**
+- Run all five analysis categories (A–E) end-to-end using sample data and
+  verify each writes valid NASTRAN output.
+- Update `doc/architecture.md`, `doc/analysis_code.md`, and `doc/ui.md` for
+  any new or changed public interfaces introduced in Steps 1–14.
+- Check `doc/aerospace_variables_reference.csv` — add any new `code_variable_name`
+  entries introduced in the new modules.
+- Verify `config/defaults.json` contains all keys referenced by new modules
+  (`trim_tol`, `flex_tol`, `flex_max_iter`, `k_sigma_nd`, `sigma_w_m_s`,
+  `gust_velocity_above_20kft`, `conm2_units`).
+
+**Acceptance criteria:**
+- `python main.py` runs cleanly; no import errors.
+- All four Phase 1 analysis menu options (A, B, C, D) complete without unhandled
+  exceptions on their respective sample data files.
+- No `doc/` file is inconsistent with the current codebase.
+
+**Dependencies:** Steps 1–13.
+
+---
+
+## Development order summary
+
+| # | Step | Module(s) | Unlocks |
+|---|---|---|---|
+| 1 | Trim solver | `trim.py` | SFL, DFL handlers |
+| 2 | Combined loads pipeline | `loads.py` extensions | All analysis handlers |
+| 3 | NASTRAN output | `nastran_out.py` | All analysis handlers |
+| 4 | SFL handler complete | `menu.py` | Category A runs end-to-end |
+| 5 | Ground loads | `ground.py` | SGL, DGL handlers |
+| 6 | Ground loads LRA summation | `loads.py` extension | SGL, DGL handlers |
+| 7 | SGL handler + data | `menu.py`, data | Category C runs end-to-end |
+| 8 | DGL handler + data | `menu.py`, data | Category D runs end-to-end |
+| 9 | Gust loads | `gust.py` | DFL gust path |
+| 10 | Maneuver time history | `maneuver.py` | DFL maneuver path |
+| 11 | DFL handler + data | `menu.py`, data | Category B runs end-to-end |
+| 12 | Aeroelastic stack | `beam.py`, `aeroelastic.py`, `aero_trim.py` | Flexible SFL |
+| 13 | Standalone VMT plot | `tools/plot_vmt.py` | Post-processing |
+| 14 | Integration test + doc update | all `doc/` files | Shippable Phase 1 |
+
+---
+
+## Deferred (Phase 2)
+
+- Category E — Flap / High-Lift Loads (`handle_flaps_deferred` shows deferred
+  message; `data/conditions/flap/` subdirectory is reserved but empty in Phase 1).
+  Implementation requires: `loads.compute_flap_loads()`, sample condition CSV
+  (`flap_sample.csv`), and updated `menu.py` handler. See `doc/analysis_code.md §e`
+  and `decision.md §9` for the full design specification.
+- Category F — Control Surface Loads (`handle_controls_deferred` shows deferred
+  message as intended).
+- 1-cosine TDG (§b2-Phase2) — H sweep, `h_gust_m` and `n_gust_steps` parsed
+  but unused.
+- DLM/NASTRAN PSD FRFs (§b3-Phase2) — replaces 2-DOF rigid-body model.
+- Dynamic gear impact analysis (§d3).
+- FAR 23 / CS-23 regulatory basis (`src/far_reg.py`).
+- A.3 static lateral balanced trim (`maneuver_type='balanced_lateral'`).

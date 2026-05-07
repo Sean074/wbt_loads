@@ -123,6 +123,20 @@ If a new module, capability, or convention is introduced that is not yet covered
 by any `doc/` file, add coverage to the appropriate file as part of the same
 change.
 
+**After every development step, code revision, or documentation update**, Claude
+Code MUST also review and update all of the following program-level documents to
+keep them consistent with the current state of the project:
+
+| File | Purpose |
+|---|---|
+| `decision.md` | Architecture and design decisions — update if a decision is revisited, a new option is chosen, or an implementation detail is resolved |
+| `dev_plan.md` | Development plan and progress — mark completed steps, add new steps discovered during implementation, revise estimates or scope |
+| `WBT_loads.md` | Top-level program description / user-facing overview — update if capabilities, inputs, outputs, or workflow change |
+| `CLAUDE.md` | This file — update if a new convention, constraint, or project-wide rule is established |
+
+These four files must be read at the end of every task and updated before the
+response is complete. Do not leave any of them stale.
+
 ---
 
 ## Regulatory context
@@ -140,3 +154,8 @@ Load conditions are developed per:
 Key load cases implemented (FAR 25 only): symmetric pull-up, push-over, rolling
 pull-out, yaw maneuver, discrete and continuous gust (1-cosine and power
 spectral). The condition list input file specifies which cases are active.
+
+Phase 1 analysis categories (A–D) are implemented; Categories E (Flap /
+High-Lift Loads) and F (Control Surface Loads) are both deferred to Phase 2.
+The TUI slots for E and F are reserved (dimmed, non-selectable) and their
+`data/conditions/` subdirectories are created but empty.

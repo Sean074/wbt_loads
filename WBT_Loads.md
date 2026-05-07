@@ -88,7 +88,13 @@ the regulation sections listed.
 * **Phase 2 (deferred) — full DLM/NASTRAN FRF:** frequency response functions
   from NASTRAN DLM or ZONA51 on the flexible structure.
 
-### High-lift device conditions (FAR 25.345)
+### High-lift device conditions (FAR 25.345) — deferred to Phase 2
+
+> **Not implemented in the initial release.** Category E (Flap / High-Lift Loads)
+> is deferred to Phase 2 per the revised development plan. The TUI slot and
+> `data/conditions/flap/` directory are reserved. The full design specification
+> is in `doc/analysis_code.md §e` and `decision.md §9`.
+
 * Flap / slat extended at V_F (design flap speed) at approved configurations
 * Vertical gust at V_F; asymmetric flap failure load case
 

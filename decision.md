@@ -584,10 +584,17 @@ restarting the program.
 | E | Flap / High-Lift Loads | FLAPS | FAR 25.345 | `data/conditions/flap/` |
 | F | Control Surface Loads | CONTROLS | FAR 25.395–25.415 | `data/conditions/control_surface/` |
 
-Category F is **deferred to Phase 2**. The subdirectory slot is reserved; no CSV
-schema or analysis code is defined in Phase 1. When implemented, Category F covers
-pilot applied loads (FAR 25.395), surface balance loads (FAR 25.397), and secondary
-control loads (FAR 25.405).
+Categories E and F are **deferred to Phase 2**. Their subdirectory slots are
+reserved and empty in Phase 1; no CSV schema or analysis code is defined for
+either category in Phase 1. When implemented:
+
+- **Category E** covers high-lift device loads per FAR 25.345 (flap/slat extended
+  conditions, maneuver and gust load cases with flap deployed). Implementation
+  requires `loads.compute_flap_loads()` and the idealized Pn/Pc pressure
+  distribution method described in `doc/analysis_code.md §e`.
+- **Category F** covers control surface structural loads: pilot applied loads
+  (FAR 25.395), surface balance loads (FAR 25.397), and secondary control loads
+  (FAR 25.405).
 
 #### CSV format — per-type column schemas
 
@@ -651,13 +658,14 @@ Supported `maneuver_type` values: `level_landing`, `tail_down_landing`,
 `rough_runway`, `abrupt_braking`. See the extended `maneuver_type` enumeration
 in §1b.
 
-**Category E — Flap / High-Lift Loads**
+**Category E — Flap / High-Lift Loads (deferred — Phase 2)**
 
-Common columns only (§1b). A non-zero `flap_deg` column is mandatory and signals
-the high-lift analysis path. `maneuver_type` values used: `symmetric_pullup`,
-`pushover`, `high_lift_gust`. Routing to the Category E handler is triggered by
-`flap_deg > 0`; the handler applies the appropriate aerodynamic increment for
-the deployed flap configuration.
+No CSV schema defined in Phase 1. The `data/conditions/flap/` subdirectory is
+created but remains empty. When implemented, Category E conditions will use the
+common columns from §1b with a mandatory non-zero `flap_deg` column plus the
+additional columns described in `doc/analysis_code.md §e` (`ref_condition_id`,
+`flap_chord_m`, `pn_shape`, `pc_shape`). Supported `maneuver_type` values:
+`symmetric_pullup`, `pushover`, `high_lift_gust`.
 
 **Category F — Control Surface Loads (deferred — Phase 2)**
 
@@ -672,7 +680,7 @@ data/conditions/
   ├── dynamic_flight/         # Category B CSVs from LOAD_CASE
   ├── static_ground/          # Category C CSVs from LOAD_CASE
   ├── dynamic_ground/         # Category D CSVs from LOAD_CASE
-  ├── flap/                   # Category E CSVs from LOAD_CASE
+  ├── flap/                   # Category E — reserved; empty in Phase 1
   └── control_surface/        # Category F — reserved; empty in Phase 1
 ```
 
@@ -683,7 +691,7 @@ User selects "Run analysis" from main menu
         │
         ▼
 ui.select_analysis_type()
-    — numbered menu of categories A–F; F labelled "(Phase 2 — deferred)"
+    — numbered menu of categories A–F; E and F labelled "(Phase 2 — deferred)"
         │
         ▼
 ui.select_condition_csv(analysis_type)
@@ -794,9 +802,7 @@ D  Dynamic Ground Loads  (DGL)
                    lateral_drift, rebound_landing                    → ground.py
    D.2  Taxi       taxi_bump, rough_runway, abrupt_braking           → ground.py
 
-E  Flap / High-Lift Loads (FLAPS)
-   symmetric_pullup, pushover                                        → trim + loads
-   high_lift_gust                                                    → gust.py
+E  Flap / High-Lift Loads (FLAPS) — Phase 2, deferred
 
 F  Control Surface Loads (CONTROLS) — Phase 2, deferred
 ```
@@ -878,7 +884,7 @@ are the authoritative routing table for all analysis sub-categories:
 CATEGORY_HANDLERS = {
     "A": _handle_static_flight,   "B": _handle_dynamic_flight,
     "C": _handle_static_ground,   "D": _handle_dynamic_ground,
-    "E": _handle_flap_loads,      "F": _handle_controls_deferred,
+    "E": _handle_flaps_deferred,  "F": _handle_controls_deferred,
 }
 
 _SFL_DISPATCH = {
@@ -906,9 +912,7 @@ _DGL_DISPATCH = {
     "abrupt_braking":     _run_taxi,
 }
 _FLAP_DISPATCH = {
-    "symmetric_pullup": _run_trim_and_loads,
-    "pushover":         _run_trim_and_loads,
-    "high_lift_gust":   _run_gust,
+    # Phase 2 — not implemented in Phase 1
 }
 ```
 
