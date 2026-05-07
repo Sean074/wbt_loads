@@ -73,12 +73,13 @@ attachment points), section-load reporting, and any structural geometry.
 
 Variable names for structural frame positions: `x_m`, `y_m`, `z_m`.
 
-**Frame handedness note:** This follows the aircraft structural convention
-(fuselage stations / butt lines / waterlines) used in NASTRAN aircraft models.
-By the mathematical right-hand rule, `x_aft × y_starboard = z_down`; the z_up
-choice is a deliberate departure from a strict RHR system in order to match
-physical aircraft geometry (waterlines increase upward). Code must not assume
-RHR applies when computing cross-products in this frame.
+**Frame handedness note:** This IS a right-handed coordinate system.
+`x_aft × y_starboard = z_up` is exact: the cross product follows the standard
+right-hand rule. Code computing cross-products in this frame may use standard
+right-hand-rule formulas without any sign correction. The system differs from
+the aerodynamic body-axis frame (x forward, z down) but both are right-handed;
+the choice here matches the aircraft structural convention (fuselage stations /
+butt lines / waterlines) used in NASTRAN aircraft models.
 
 ### 2. Aerodynamic body-axis frame
 
@@ -158,10 +159,10 @@ body; cut-face normal = −ŷ):
 | Static pressure | `p_static_pa` | Pa | |
 | Sea-level reference pressure | `p_0_pa` | Pa | 101 325 Pa |
 | Air density | `rho_kg_m3` | kg/m³ | |
-| Sea-level reference density | `rho_0_kg_m3` | kg/m³ | 1.225 kg/m³ (ISA) |
+| Sea-level reference density | `rho_0_kg_m3` | kg/m³ | 1.225 kg/m³ (US Standard Atmosphere 1976) |
 | Density ratio | `rho_ratio` | — | σ = ρ/ρ₀; dimensionless, no suffix |
 | Temperature | `t_k` | K | |
-| Sea-level reference temperature | `t_0_k` | K | 288.15 K (ISA) |
+| Sea-level reference temperature | `t_0_k` | K | 288.15 K (US Standard Atmosphere 1976) |
 
 ### Speed
 
@@ -192,11 +193,19 @@ Physical constants and fixed reference values use `ALL_CAPS` with a unit suffix:
 GAMMA        = 1.4             # ratio of specific heats; dimensionless
 A_0_M_S      = 340.294         # sea-level speed of sound, m/s
 P_0_PA       = 101325.0        # sea-level static pressure, Pa
-RHO_0_KG_M3  = 1.225           # sea-level density, kg/m³
-T_0_K        = 288.15          # sea-level temperature, K
+RHO_0_KG_M3  = 1.225           # sea-level density, kg/m³  (US Standard Atmosphere 1976)
+T_0_K        = 288.15          # sea-level temperature, K   (US Standard Atmosphere 1976)
 G_M_S2       = 9.80665         # standard gravity, m/s²
-FS            = 1.5             # factor of safety (FAR 25.303); dimensionless
 ```
+
+**Atmospheric model (Decision 19):** the US Standard Atmosphere 1976 is the
+authoritative reference for all altitude-dependent atmospheric properties
+(density, pressure, temperature, speed of sound). The ATMOS project at
+`/Users/seanomeara/Documents/99-Tests/atmos/20_ATMOS` contains candidate
+implementation code. Before coding the atmosphere module, review ATMOS to
+determine whether to port its routines into `src/atmos.py` or to call ATMOS
+as an external dependency. WBT_LOADS is subsonic only; the atmosphere model
+is required only from sea level to ~51 000 ft (0–15 545 m).
 
 Tunable solver parameters (`trim_tol`, `flex_max_iter`, etc.) belong in
 `config/defaults.json`, not as module-level constants.
@@ -244,6 +253,36 @@ def solve_trim(speed, altitude, weight, cg): ...
 ```
 
 Return dicts use the registered `code_variable_name` keys.
+
+---
+
+## Flexibility matrix specification (Decision 15)
+
+The flexibility matrix `f_flex` used in `aeroelastic.py` and `beam.py`:
+
+- **Dimensions:** (n_dofs × n_dofs) where `n_dofs = 2 × n_lra_stations` per
+  surface (one transverse displacement DOF and one rotation DOF per station).
+- **DOF ordering:** interleaved — `[u₁, θ₁, u₂, θ₂, …, uₙ, θₙ]` where `u` is
+  transverse displacement (m) and `θ` is rotation (rad).
+- **Entry units:** depend on the DOF types of the row and column:
+
+| Row DOF | Column DOF | Entry units | Physical meaning |
+|---|---|---|---|
+| displacement `u` | force | m/N | transverse deflection per unit force |
+| rotation `θ` | moment | rad/(N·m) | rotation per unit moment |
+| displacement `u` | moment | m/(N·m) | displacement per unit moment |
+| rotation `θ` | force | rad/N | rotation per unit force |
+
+The matrix is symmetric: `F_flex[i,j] == F_flex[j,i]` (Maxwell reciprocity).
+
+Computed by `beam.py` as the modal truncated flexibility: `F_flex = Φ Λ⁻¹ Φᵀ`
+where `Λ = diag(ω²)` contains modal stiffnesses (rad²/s²) and `Φ` is the
+mass-normalised mode shape matrix (mass units absorbed into normalisation so
+the product has units m²/N or rad²/(N·m) at diagonal terms, consistent with
+the table above).
+
+All values in SI throughout computation. No unit conversion is applied to
+`f_flex` after it is built by `beam.py`.
 
 ---
 

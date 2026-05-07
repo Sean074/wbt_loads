@@ -42,9 +42,11 @@ and why the structure is organised the way it is.
 │  src/gust.py        — discrete & continuous gust loads │
 │  src/ground.py      — static & dynamic ground loads│
 │  src/loads.py       — loads summation to LRA/grid  │
+│  src/aero_trim.py   — coupled aeroelastic trim loop │
 │  src/aeroelastic.py — aeroelastic corrections      │
 │  src/beam.py        — sbeam BDF + modal ROM        │
 │  src/lra.py         — loads reference axis + grid  │
+│  src/atmos.py       — US Std Atmosphere 1976       │
 └──────────────────────┬─────────────────────────────┘
                        │ uses
 ┌──────────────────────▼─────────────────────────────┐
@@ -64,12 +66,17 @@ and why the structure is organised the way it is.
 │    ├── dynamic_flight/ — Category B CSVs           │
 │    ├── static_ground/  — Category C CSVs           │
 │    ├── dynamic_ground/ — Category D CSVs           │
-│    ├── flap/           — Category E CSVs           │
+│    ├── flap/           — Category E — Flap/High-Lift│
 │    └── control_surface/— Category F (Phase 2)      │
 │  data/outputs/    — generated results              │
-│    ├── <name>_loads.bdf  — NASTRAN FORCE/MOMENT    │
-│    │     cards per condition per LRA station       │
-│    └── <name>_smt.csv   — section load tables     │
+│    ├── <ac_id>_<cycle_id>_<case_id>.dat            │
+│    │     NASTRAN FORCE/MOMENT per load case (all   │
+│    │     surfaces in one file; load cycle ID is    │
+│    │     user-defined at write time)               │
+│    ├── <ac_id>_<cycle_id>_<component>_VMT.csv      │
+│    │     VMT section load tables per surface       │
+│    └── analysis_summary_<date>.out                 │
+│          input file manifest — paths, mod dates    │
 └────────────────────────────────────────────────────┘
 ```
 
@@ -93,9 +100,11 @@ wbt_loads/
 │   ├── gust.py              # Computation — discrete & continuous gust loads
 │   ├── ground.py            # Computation — static & dynamic ground loads
 │   ├── loads.py             # Computation — loads summation to LRA/grid points
+│   ├── aero_trim.py         # Computation — coupled aeroelastic trim iteration
 │   ├── aeroelastic.py       # Computation — aeroelastic corrections + jig shape
 │   ├── beam.py              # Computation — sbeam BDF parser + modal ROM
 │   ├── lra.py               # Data model — loads reference axis and grid
+│   ├── atmos.py             # Computation — US Standard Atmosphere 1976
 │   ├── nastran_out.py       # Output — NASTRAN FORCE/MOMENT card writer
 │   ├── unit_convert.py      # Support — conversion constants only
 │   └── config.py            # Support — config file loader
@@ -106,6 +115,7 @@ wbt_loads/
 ├── data/
 │   ├── aero/                # Aerodynamic strip load database files
 │   ├── mass/                # NASTRAN CONM2 mass model files
+│   ├── gear/                # Landing gear design data (stroke, efficiency)
 │   ├── lra/                 # Loads reference axis definition files
 │   ├── conditions/          # Condition list files — six analysis type subdirectories
 │   │   ├── static_flight/   #   Category A — static flight loads (LOAD_CASE output)
@@ -114,7 +124,12 @@ wbt_loads/
 │   │   ├── dynamic_ground/  #   Category D — landing and dynamic ground
 │   │   ├── flap/            #   Category E — flap / high-lift loads
 │   │   └── control_surface/ #   Category F — control surface loads (Phase 2; empty)
-│   └── outputs/             # Generated runtime artifacts (not committed)
+│   ├── outputs/             # Generated runtime artifacts (not committed)
+│   └── data_summary.json    # Provenance: data source, analyst, analysis intent
+│
+│ The data/ root path is user-configurable via "data_root" in config/defaults.json.
+│ The default is data/ relative to the project root. All subdirectory names are
+│ fixed; only the root path changes.
 │
 ├── doc/                     # Authoritative coding standards
 │   ├── architecture.md      # This file
@@ -235,6 +250,38 @@ The inertia and aerodynamic loads are both summed to the LRA reporting points.
 **Allowed to import:** `json`, `pathlib`, `numpy`
 
 **Must not contain:** display logic or aerodynamic data.
+
+---
+
+### `src/atmos.py` — US Standard Atmosphere 1976 (Decision 30)
+
+Computes altitude-dependent atmospheric properties per US Standard Atmosphere
+1976: density (`rho_kg_m3`), pressure (`p_static_pa`), temperature (`t_k`),
+and speed of sound (`a_m_s`) from geopotential altitude `h_m`. Also provides
+EAS↔TAS conversion and dynamic pressure helpers.
+
+**Self-contained by design (Decision 30):** no other WBT_LOADS module is
+imported. The module can be imported and called independently of the rest of
+the program — users may use it in standalone tools or scripts with no other
+WBT_LOADS dependencies.
+
+Public functions (all inputs and outputs SI; no configuration parameters):
+
+```python
+def temperature(h_m: float) -> float          # → t_k (K)
+def pressure(h_m: float) -> float             # → p_static_pa (Pa)
+def density(h_m: float) -> float              # → rho_kg_m3 (kg/m³)
+def speed_of_sound(h_m: float) -> float       # → a_m_s (m/s)
+def eas_to_tas(v_eas_m_s: float, h_m: float) -> float     # → v_tas_m_s (m/s)
+def dynamic_pressure(v_tas_m_s: float, h_m: float) -> float  # → q_dyn_pa (Pa)
+```
+
+US Std Atm 1976 constants are module-level literals; no `unit_convert` import
+needed. Range: sea level (0 m) to ~15 545 m (~51 000 ft) — subsonic envelope.
+
+**Allowed to import:** `math`, `numpy` — nothing else.
+
+**Used by:** `trim.py`, `maneuver.py`, `gust.py`
 
 ---
 
@@ -376,13 +423,43 @@ ID (SID) equals the condition sequence number in the condition list.
 
 ---
 
+### `src/aero_trim.py` — Coupled aeroelastic trim (Decision 13)
+
+Owns the flexible-body trim iteration: the convergence loop that alternates
+between the trim solver and the aeroelastic deflection correction until both
+have converged simultaneously. This module exists so that neither `trim.py` nor
+`aeroelastic.py` needs to import the other; the coupling is handled here.
+
+Typical call sequence (internal):
+1. `trim.solve_trim(...)` → rigid trim state
+2. `aeroelastic.apply_corrections(rigid_state, ...)` → deflected shape + corrected loads
+3. Repeat 1–2 until section load change < `APP_CONFIG["flex_tol"]`
+
+`menu.py` calls `aero_trim.solve(...)` instead of calling `trim` and
+`aeroelastic` directly for flight load conditions where elastic corrections are
+active.
+
+**Allowed to import:** `trim`, `aeroelastic`, `aero_db`, `lra`, `numpy`, `scipy`,
+`unit_convert`, `config`
+
+**Must not contain:** display logic, ground load logic.
+
+---
+
 ### `src/aeroelastic.py` — Aeroelastic corrections
 
 Applies aeroelastic corrections using the elastic model (influence coefficients /
 stiffness matrix). Computes aeroelastic effectiveness and determines the jig shape
 from the cruise condition.
 
-**Allowed to import:** `aero_db`, `loads`, `lra`, `numpy`, `scipy`
+**Control reversal (Decision 17):** when `e_flex_nd < 0` for any control surface
+at any condition, `aeroelastic.py` raises a `ValueError` with the message
+`"Control reversal: <surface> at condition <ID> (e_flex_nd = <value>)"`. The
+calling handler in `menu.py` catches this, prints it as a `[red]Error[/red]`,
+and returns to the menu without writing an output file. Control reversal is
+treated as a hard error; the run is aborted for that condition.
+
+**Allowed to import:** `aero_db`, `loads`, `lra`, `beam`, `numpy`, `scipy`
 
 **Must not contain:** display logic.
 
@@ -419,12 +496,14 @@ Thin module. `from config import APP_CONFIG` returns the dict parsed from
 | `src/aero_db.py` | `numpy`, `scipy`, `pandas`, `unit_convert`, `config` |
 | `src/mass_model.py` | `numpy`, `pandas` |
 | `src/lra.py` | `numpy` |
-| `src/trim.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
-| `src/maneuver.py` | `aero_db`, `mass_model`, `lra`, `trim`, `numpy`, `scipy`, `unit_convert` |
-| `src/gust.py` | `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
+| `src/atmos.py` | `math`, `numpy` only — no other WBT_LOADS modules |
+| `src/trim.py` | `atmos`, `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
+| `src/maneuver.py` | `atmos`, `aero_db`, `mass_model`, `lra`, `trim`, `numpy`, `scipy`, `unit_convert` |
+| `src/gust.py` | `atmos`, `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/ground.py` | `mass_model`, `lra`, `numpy`, `unit_convert`, `config` |
 | `src/loads.py` | `aero_db`, `mass_model`, `lra`, `unit_convert` |
-| `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `numpy`, `scipy` |
+| `src/aero_trim.py` | `trim`, `aeroelastic`, `aero_db`, `lra`, `numpy`, `scipy`, `unit_convert`, `config` |
+| `src/aeroelastic.py` | `aero_db`, `loads`, `lra`, `beam`, `numpy`, `scipy` |
 | `src/beam.py` | `sbeam`, `numpy`, `scipy`, `unit_convert`, `config` |
 | `src/unit_convert.py` | nothing |
 | `src/config.py` | stdlib only (`json`, `pathlib`) |
@@ -521,7 +600,7 @@ See `decision.md §11` for the engineering workaround.
 Downstream (external — not part of this application):
 
 ```
-data/outputs/<name>_loads.bdf
+data/outputs/<aircraft_id>_<load_cycle_id>_<load_case_id>.dat
         │
         ▼ read by
 CRITIC_LOADS (independent tool)
@@ -565,12 +644,19 @@ envelope internally.
 
 ### What WBT_LOADS produces
 
-For each completed analysis run, `src/nastran_out.py` writes one NASTRAN bulk
-data file (`data/outputs/<name>_loads.bdf`) containing:
+For each completed analysis run, `src/nastran_out.py` writes:
 
-- One **FORCE** card per LRA station per condition — components `(vx_n, fy_n, vz_n)`
+**NASTRAN loads file** (one per load case, all surfaces):
+`<aircraft_id>_<load_cycle_id>_<load_case_id>.dat`
+
+The `load_cycle_id` is a user-defined label entered in the TUI before the
+output is written (e.g. `rev01`, `CycleA`). This provides traceability across
+analysis iterations without embedding a date in the filename.
+
+Contents:
+- One **FORCE** card per LRA station per surface — components `(vx_n, fy_n, vz_n)`
   in the structural frame (x aft, y starboard, z up).
-- One **MOMENT** card per LRA station per condition — components `(mx_nm, my_nm, mz_nm)`
+- One **MOMENT** card per LRA station per surface — components `(mx_nm, my_nm, mz_nm)`
   in the structural frame.
 - Load set ID (SID) = condition sequence number in the condition list (1-based).
 - Coordinate system ID (CID) = 0 (basic / global frame).
@@ -578,6 +664,18 @@ data file (`data/outputs/<name>_loads.bdf`) containing:
 
 Both limit and ultimate values are written; ultimate cards are placed in a
 separate load case block with SID offset by `10000 × n_conditions`.
+
+**VMT summary CSV** (one per surface):
+`<aircraft_id>_<load_cycle_id>_<component>_VMT.csv`
+
+where `<component>` is the surface tag (e.g. `wing`, `htail`, `vtail`).
+
+**Analysis summary** (one per output write session):
+`analysis_summary_<YYYYMMDD>.out`
+
+Lists every input file used (path and last-modified timestamp) so results are
+traceable to the data revision used, without requiring hash embedding in the
+input files themselves (Decision 27, Option B).
 
 ### What CRITIC_LOADS does (external — not implemented here)
 
@@ -598,10 +696,12 @@ own structural load stations when setting up CRITIC_LOADS.
 ### Module boundary
 
 `src/nastran_out.py` is the only module in this application that writes the
-NASTRAN output file. No other module writes to `data/outputs/` except via
-`nastran_out.py` (for BDF output) or the TUI chart helpers (for SMT PNG/CSV).
-No application module may implement envelope accumulation, potato plot logic,
-or critical case selection — those responsibilities belong entirely to CRITIC_LOADS.
+NASTRAN output file (`.dat`), the VMT CSV tables, and the analysis summary
+`.out` file. No other module writes to `data/outputs/` except via `nastran_out.py`
+(for `.dat` / VMT / summary output) or the TUI chart helpers (for SMT matplotlib
+windows). No application module may implement envelope accumulation, potato plot
+logic, or critical case selection — those responsibilities belong entirely to
+CRITIC_LOADS.
 
 ---
 
@@ -658,6 +758,44 @@ C defers *automated formula enforcement*, not the ability to analyse a GA aircra
 
 ---
 
+## Program behavior conventions
+
+### Non-convergence (Decision 23)
+
+When the trim solver fails to converge for a condition:
+
+1. Print `[yellow]Warning: trim did not converge for condition <ID>. Skipped.[/yellow]`.
+2. Continue to the next condition in the batch.
+3. Mark the condition as `SKIP` in the batch summary table.
+
+Non-converged conditions appear in the batch summary with status `SKIP` and are
+omitted from the NASTRAN output file. No output is written for a non-converged
+condition. The analysis summary `.out` file notes each skipped condition.
+
+### Single aircraft per session (Decision 24)
+
+One aircraft configuration (aero database, mass file, LRA file, elastic model)
+is loaded at startup and is fixed for the session. To switch configurations,
+restart the program. `menu.py` must not implement a mid-session configuration
+reload.
+
+### FAR coverage validation (Decision 28)
+
+WBT_LOADS does not check whether the supplied condition list is complete or
+compliant with FAR 25 (e.g. that all required categories are present). Coverage
+validation is the responsibility of the LOAD_CASE project and the responsible
+engineer. WBT_LOADS validates only the column schema of the input CSV (required
+columns present, correct types, SI units).
+
+### Load combination for asymmetric cases (Decision 25)
+
+Rolling pull-out section loads are the **direct algebraic sum** of the symmetric
+pull-up component and the antisymmetric roll-rate component at each LRA station
+(direct superposition per FAR 25.349). SRSS or partial-envelope combinations are
+not used.
+
+---
+
 ## Adding new features
 
 **New load case or maneuver type:**
@@ -681,6 +819,40 @@ parameter.
 
 **New standalone tool or script:**
 Place it in `tools/`. It must not be imported by any application module.
+
+---
+
+## tools/plot_vmt.py — Standalone VMT chart script (Decision 29)
+
+`tools/plot_vmt.py` is a command-line script that reads saved VMT CSV files
+and renders shear/moment/torque diagrams using `matplotlib`. It runs
+independently — no WBT_LOADS application modules are imported; it requires
+only `matplotlib`, `pandas`, and `numpy`.
+
+**CLI usage:**
+```
+python tools/plot_vmt.py --file <path_to_VMT.csv>
+                         [--conditions C001 C002 ...]
+                         [--surface wing]
+                         [--envelope <path_to_envelope.csv>]
+```
+
+Supported modes:
+- Single case: plots Vz, Mx, My vs. spanwise station for one condition.
+- Overlay: multiple `--conditions` arguments overlay all listed cases on the
+  same axes.
+- Vs envelope: `--envelope` argument overlays the condition against a
+  reference envelope CSV.
+
+Inertia and aerodynamic contributions are plotted as separate series on each
+plot. The script calls `plt.show()` (blocking) and prints no TUI output.
+
+**TUI integration (Decision 29, Option C):** the same capability is available
+interactively from the TUI "Review cases" menu item, which calls
+`ui.show_vmt_single`, `ui.show_vmt_compare`, and `ui.show_vmt_vs_envelope`
+from `src/ui.py`. The two paths are independent implementations of the same
+analysis; `tools/plot_vmt.py` does not import `src/ui.py` or any other
+application module.
 
 ---
 

@@ -7,7 +7,7 @@ The TUI follows a linear **input → analysis → output** workflow driven by
 spartan: a 1990s engineering-program look — dark background, monochrome panels,
 plain ASCII box art, no animations.
 
-Compatibility target: macOS Terminal and standard Unix terminals.
+Compatibility target: macOS Terminal, Windows Powwershell, and standard Unix terminals.
 
 ---
 
@@ -209,9 +209,9 @@ Organise functions in this order, separated by comment banners:
 ```
 
 **`select_analysis_type()`** — renders a numbered panel listing Categories A–F
-with their names; Category F is labelled `"(Phase 2 — deferred)"` and is not
-selectable until Phase 2. Returns the single-letter category ID (`"A"` through
-`"E"`).
+with their names. Category F is labelled `"(Phase 2 — deferred)"` and is not
+selectable until Phase 2. Category E (Flap / High-Lift) is Phase 1 and is
+selectable. Returns the single-letter category ID (`"A"` through `"E"`).
 
 The module-level dict `CATEGORY_LABELS` in `ui.py` is the **canonical source**
 for all TUI menu label strings; do not duplicate these strings elsewhere:
@@ -242,17 +242,126 @@ CATEGORY_SUBDIR = {
 ```
 
 **`select_condition_csv(analysis_type)`** — lists CSV files found in
-`data/conditions/<type>/` where `<type>` is the subdirectory name for the
-selected category (e.g. `static_flight`, `dynamic_flight`). Returns the resolved
-`pathlib.Path` to the selected file.
+`<data_root>/conditions/<type>/` where `<data_root>` is `APP_CONFIG["data_root"]`
+(default: `data/` relative to project root; user-configurable per Decision 22)
+and `<type>` is the subdirectory name for the selected category (e.g.
+`static_flight`, `dynamic_flight`). Returns the resolved `pathlib.Path` to the
+selected file.
 
 **Display units** — when `APP_CONFIG["display_units"] == "imperial"`, TUI result
 tables convert SI values before display using named constants from `unit_convert.py`
 (`N_LBF`, `NM_FTLBF`, `M_FT`). No bare numeric conversion literals are permitted
 in display functions; all output files remain in SI regardless of this setting.
 
+**Airspeed and altitude dual display** — regardless of the `display_units`
+setting, airspeed and altitude are always shown in both SI and aviation units:
+
+| Quantity | SI display | Aviation display |
+|---|---|---|
+| Airspeed | m/s | knots (using `M_S_KTS`) |
+| Altitude | m | feet (using `M_FT`) |
+
+Format: `<SI_value> m/s (<KTAS_value> kts)` and `<SI_value> m (<FT_value> ft)`.
+This applies to condition summaries, trim balance tables, and batch result tables.
+
 The module exposes a single `Console` instance (`console`) used by both `ui.py`
 and `menu.py`. Do not instantiate additional consoles.
+
+---
+
+## Numeric input validation ranges (Decision 21)
+
+All numeric prompts enforce the ranges below using inline `prompt_toolkit`
+validation. Values outside the range show a `[red]` inline error and refuse
+submission. Values that exceed a "soft limit" (flagged range) show a `[yellow]`
+warning and ask the user to confirm before proceeding; they are not rejected
+outright.
+
+| Variable | Hard limits | Soft / confirm-required range | Notes |
+|---|---|---|---|
+| Pressure altitude `h_m` | 0 – 15 850 m | — | 51 900 ft troposphere + lower stratosphere |
+| Equivalent airspeed `v_eas_m_s` | 25 – 260 m/s | aircraft-specific | ~50–500 kts |
+| CG position `x_cg_nd` | 0 – 1 (fraction MAC) | outside 0.05–0.60 → confirm | 5–60 % MAC normal range; warn if outside |
+| Gross mass `m_ac_kg` | > 0 | outside MFL–MRW → confirm | MFL = Minimum Flight Weight; MRW = Maximum Ramp Weight; values from aircraft config |
+| Angle of attack `alpha_deg` | −30 – +40 deg | — | |
+| Sideslip `beta_deg` | −40 – +40 deg | — | |
+| Normal load factor `nz_nd` | −3.0 – +5.0 | — | Wider than FAR 25 to accommodate ferry and failure cases |
+
+When a soft-limit confirmation is required:
+
+```python
+console.print(f"[yellow]Warning: value {val} is outside the normal range "
+              f"{lo}–{hi}. Confirm? (y/n): [/yellow]", end="")
+```
+
+The user must enter `y` or `yes` (case-insensitive) to continue. Any other
+input re-presents the prompt.
+
+---
+
+## VMT / SMT charts (Decisions 20 and 29)
+
+VMT (V=Shear, M=Moment, T=Torque) section load plots are produced using
+`matplotlib` in a separate pop-up window. The TUI pauses while the window is
+open; `plt.show()` blocks until the user closes it.
+
+**Two access paths (Decision 29, Option C):**
+- **TUI "Review cases" menu item** — interactive session; calls the helpers
+  below against in-memory results or a previously written VMT CSV.
+- **`tools/plot_vmt.py` standalone script** — offline use; reads saved VMT
+  CSV files without launching the TUI. See `doc/architecture.md
+  §tools/plot_vmt.py` for CLI usage.
+
+The TUI chart helpers are called from the "Review cases" menu item (not
+automatically after each batch run):
+
+```python
+ui.show_vmt_single(section_loads_df, condition_id, surface)
+    # Opens one matplotlib figure with 3 subplots: Vz, Mx, My vs. spanwise station
+
+ui.show_vmt_compare(loads_list, condition_ids, surface)
+    # Overlays multiple conditions on the same subplot axes for comparison
+
+ui.show_vmt_vs_envelope(section_loads_df, envelope_df, condition_id, surface)
+    # Plots a single condition against a reference envelope (loaded from CSV)
+```
+
+Inertia and aerodynamic contributions are plotted as separate series using
+`[cyan]` and unstyled (white/default) line colors so the balance is visible.
+
+Chart display rules:
+- Always use `plt.show()` (blocking); never `plt.savefig()` from within the TUI
+- The TUI prints `[cyan]Displaying VMT chart — close window to continue[/cyan]`
+  before the `plt.show()` call
+- A headless environment (no display) raises `RuntimeError`; the handler catches
+  it, prints `[red]Error: no display available for chart[/red]`, and returns to
+  the menu
+
+The `CATEGORY_SUBDIR`, `CATEGORY_LABELS`, and `CATEGORY_FILE_PREFIX` dicts
+remain the sole source of category metadata; chart functions receive the surface
+tag and condition data as arguments, not a category ID.
+
+---
+
+## Non-convergence display (Decision 23)
+
+When a condition is skipped due to non-convergence:
+
+```python
+console.print(f"[yellow]Warning: trim did not converge for condition "
+              f"{condition_id}. Skipped.[/yellow]")
+```
+
+The batch summary table marks the skipped condition with status `SKIP` in a
+`[yellow]` cell. Non-converged conditions are omitted from the NASTRAN output
+file. The count of skipped conditions is printed in the batch summary footer:
+
+```
+[yellow]1 condition(s) skipped due to non-convergence.[/yellow]
+```
+
+No dialog or additional prompt is shown; the program continues automatically
+to the next condition.
 
 ---
 

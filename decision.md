@@ -67,17 +67,6 @@ radians at ingestion in `condition.py`.
 | `nx_nd` | float | — | Axial load factor when non-unity |
 | `ny_nd` | float | — | Lateral load factor (yaw and lateral ground cases) |
 
-#### Control surface deflection columns (blank = 0 deg)
-
-| Column | Unit | Sign convention |
-|---|---|---|
-| `elevator_deg` | deg | Positive = trailing-edge down |
-| `aileron_deg` | deg | Positive = starboard trailing-edge down |
-| `rudder_deg` | deg | Positive = trailing-edge to port |
-| `flap_deg` | deg | Symmetric; positive = trailing-edge down |
-| `spoiler_deg` | deg | Positive = panel raised |
-| `stabiliser_deg` | deg | Trimmable horizontal stabiliser; positive = trailing-edge down |
-
 #### `maneuver_type` enumeration
 
 | Value | `category` | Regulatory reference |
@@ -105,6 +94,24 @@ radians at ingestion in `condition.py`.
 | `taxi_bump` | `ground` | FAR 25.491 |
 | `rough_runway` | `ground` | FAR 25.491 |
 | `abrupt_braking` | `ground` | FAR 25.493 / 25.507 |
+
+
+The airplane state (control deflections ) may be part of the condition definition or come from the trim/maneuver analysis tool.
+
+Example:
+Load Case: 2.5 g balanced condition, flaps up with cg from payload C001 at 50% fuel at Va at sea level.
+Trim tool FLight Condition: Velocity, elevator deflection, stabilizer deflection, alpha.
+
+#### Control surface deflection columns (blank = 0 deg)
+
+| Column | Unit | Sign convention |
+|---|---|---|
+| `elevator_deg` | deg | Positive = trailing-edge down |
+| `aileron_deg` | deg | Positive = starboard trailing-edge down |
+| `rudder_deg` | deg | Positive = trailing-edge to port |
+| `flap_deg` | deg | Symmetric; positive = trailing-edge down |
+| `spoiler_deg` | deg | Positive = panel raised |
+| `stabiliser_deg` | deg | Trimmable horizontal stabiliser; positive = trailing-edge down |
 
 > **Note — multi-type CSV hierarchy (Decision 9):** The columns above define the
 > **common-column baseline** shared by all six per-analysis-type condition CSVs
@@ -232,8 +239,8 @@ external flexibility matrix (decision 1e) unless a pre-computed NASTRAN DMIG
 flexibility is explicitly required by the project.
 
 **New config keys required (see decision 14):**
-- `beam_bdf_path` — path to the structural BDF file (one per lifting surface or
-  a single aircraft-level file; TBD per decision 5)
+- `beam_bdf_path` — path to the structural BDF file; one BDF per lifting
+  surface, matching the per-surface LRA JSON files (resolved by Decision 5)
 - `beam_n_modes` — number of modes to retain in the ROM (suggested default: 20)
 - `beam_zeta` — structural damping ratio(s); scalar or list of length n_modes
   (suggested default: 0.02)
@@ -305,6 +312,9 @@ AC 25.341-1. Requires a separate DLM aerodynamic model and a modal structural FE
 result. The condition list `maneuver_type` values `discrete_gust_vertical`,
 `discrete_gust_lateral`, and `continuous_turbulence` remain valid for Phase 2
 routing once that code path exists.
+
+Note: The TDG is time domain analysis, and the PSD is performed in the frequency
+domain. TDG will require Rational Functional Approximation (RFA) of the aerodynamics
 
 ---
 
@@ -414,7 +424,7 @@ Matches how structural sizing is organized.
 One set of stations along the aircraft centerline/spine.
 Simpler to implement; less useful for surface-by-surface structural sizing.
 
-**Direction:** [ x ] Option A — Per-surface LRAs.
+**Direction:** [x] Option A — Per-surface LRAs.
 
 User-supplied JSON files define each surface LRA.  The LRA need not be
 straight — kinks (e.g. winglet junctions) are supported by specifying 3-D
@@ -694,6 +704,9 @@ ui.print_batch_summary(results)
 ui.press_enter_to_continue()  →  returns to main menu
 ```
 
+Post-run case review and VMT comparison capability is a separate decision;
+see §29.
+
 #### Relationship to LOAD_CASE project
 
 LOAD_CASE is an independent program that generates condition CSVs from the flight
@@ -721,7 +734,10 @@ formula (e.g., aircraft with restricted envelopes, FAR 23 cases).
 Apply the FAR 25.337 formula unless the condition list specifies an explicit
 n_z_max value.
 
-**Direction:** [ ]
+**Direction:** [x] User specified by condition. The condition generation program
+(LOAD_CASE) provides the maneuver load factor. Examples:
+- max positive n_z=2.5 flaps up, n_z=2.0
+- max negative below Vc n_z=-1.0 flaps up , Vd = 0.0 flaps up
 
 ---
 
@@ -936,7 +952,11 @@ This is the correct approach but must be stated in `doc/architecture.md`.
 `trim.py` computes loads internally and returns them with the trim result.
 Violates single-responsibility; not recommended.
 
-**Direction:** [ ]
+**Direction:** [x] Option A. The trim result dict is passed as a function
+argument from `menu.py` (or `aero_trim.py` for elastic cases) to
+`loads.compute_loads(trim_state, ...)`. The dependency rule is retained; the
+aeroelastic coupling loop in Decision 13 (Option B / `aero_trim.py`) removes
+the need to inline trim inside loads.
 
 ---
 
@@ -956,7 +976,11 @@ A computation-layer module that imports both `trim` and `aeroelastic`
 and owns the coupled iteration. `menu.py` calls only `aero_trim.solve(...)`.
 Cleaner but adds a module.
 
-**Direction:** [ ]
+**Direction:** [x] Option B — dedicated `src/aero_trim.py` module owns the
+coupled iteration loop. `menu.py` calls `aero_trim.solve(...)` for all flight
+conditions where elastic corrections are active. Coordinated with Decision 12:
+`aero_trim.py` calls both `trim.solve_trim` and `aeroelastic.apply_corrections`
+internally, so neither of those modules needs to import the other.
 
 ---
 
@@ -979,7 +1003,11 @@ and any consuming module can be written. Candidate keys:
 
 Are there additional keys? Should any of the above move to the condition list instead?
 
-**Direction:** [ ]
+**Direction:** [x] The schema in the table above is the complete Phase 1 schema;
+no additional keys beyond those listed. TUI result tables display airspeed and
+altitude in both SI and aviation units simultaneously (m/s + kts; m + ft)
+regardless of the `display_units` setting. A `data_root` key (default: `"data/"`)
+is added per Decision 22.
 
 ---
 
@@ -993,7 +1021,11 @@ Needs to specify:
 - Units of each entry: ft/lbf for transverse deflection per unit force; rad/(ft·lbf) for rotation per unit moment
 - Whether bending and torsion DOF are interleaved or in separate sub-matrices
 
-**Direction:** [ ]
+**Direction:** [x] SI units throughout the computation layer. Entry units:
+m/N (transverse deflection per unit force), rad/(N·m) (rotation per unit moment),
+with m/(N·m) and rad/N for cross terms. DOF ordering is interleaved
+[u₁, θ₁, u₂, θ₂, …]. Full specification in `doc/variable_definition.md
+§Flexibility matrix specification`.
 
 ---
 
@@ -1011,7 +1043,7 @@ the wing lift curve slope (per radian).
 
 Confirm this formula applies, or note a different source/method.
 
-**Direction:** [ ]
+**Direction:** [x] The formula applies.
 
 ---
 
@@ -1031,14 +1063,18 @@ returning to the menu.
 
 **Option C — Treat control reversal as a hard error; halt the run.**
 
-**Direction:** [ ]
+**Direction:** [x] Option C — control reversal is treated as a hard error.
+`aeroelastic.py` raises `ValueError("Control reversal: <surface> at condition
+<ID> (e_flex_nd = <value>)")`. The `menu.py` handler catches this, prints a
+`[red]Error[/red]`, and returns to the menu without writing output for that
+condition.
 
 ---
 
 ## 18. Strip Integration Formula — Normalization and Axis Alignment
 
 The formula that converts Cn, Cm, Cc (dimensionless strip coefficients) to
-section loads (lbf, ft·lbf) at an LRA cut is the computational core of
+section loads (N, N.m) at an LRA cut is the computational core of
 `loads.py`. It must be explicitly documented.
 
 Key decisions:
@@ -1049,7 +1085,11 @@ Key decisions:
 - How is the strip panel area computed: `c_ft × dy_ft`, or trapezoid rule
   between adjacent stations?
 
-**Direction:** [ ]
+**Direction:** [x] Trapezoidal rule for strip panel width:
+`dF = 0.5 × (f[i] + f[i+1]) × (y[i+1] − y[i])`. Strip coefficients (Cn, Cm, Cc)
+are in the aerodynamic body-axis frame and are resolved into structural-frame
+contributions before integration. Cm is taken about the local quarter-chord and
+transferred to the LRA via the full 3-D offset vector.
 
 ---
 
@@ -1059,15 +1099,20 @@ Both are nearly identical below 65,000 ft. Confirm which standard is used
 for computing density, temperature, and pressure vs. altitude (needed for
 converting EAS to TAS, computing q_psf, and Mach number).
 
-**Direction:** [ ]
+**Direction:** [x] US Standard Atmosphere 1976 is the authoritative atmospheric
+model. All altitude-dependent properties (ρ, P, T, speed of sound) are computed
+from its standard tables/equations. WBT_LOADS is limited to subsonic analysis
+(sea level to ~51 000 ft / 15 545 m). The implementation strategy for
+`src/atmos.py` — including whether to port, depend on, or reimplement the ATMOS
+project — is a separate decision; see §30.
 
 ---
 
 ## 20. Chart / Plot Output — Delivery Medium
 
-`WBT_Loads.md` specifies SMT diagrams as an output. `doc/ui.md` prohibits
-animated and live display elements and routes all output through `rich`.
-`rich` cannot render a matplotlib/plotly chart inline.
+`WBT_Loads.md` specifies SMT diagrams (also know as VMT V=Shear, M=moment, T=Torque)
+as an output. `doc/ui.md` prohibits animated and live display elements and routes all
+ output through `rich`. `rich` cannot render a matplotlib/plotly chart inline.
 
 **Option A — Save to file; print path in TUI.**
 Charts saved as PNG (matplotlib) or HTML (plotly) to `data/outputs/`.
@@ -1083,7 +1128,11 @@ program aesthetic.
 SMT diagrams are generated by a standalone `tools/plot_smt.py` script that
 reads the output CSV. The TUI itself produces only tabular output.
 
-**Direction:** [ ]
+**Direction:** [x] Option B — `plt.show()` opens a separate matplotlib GUI
+window. The TUI prints `[cyan]Displaying VMT chart — close window to
+continue[/cyan]` before the call and pauses until the window is closed. A
+headless environment (no display) prints `[red]Error: no display available
+for chart[/red]` and returns to the menu.
 
 ---
 
@@ -1096,13 +1145,18 @@ defined. Fill in or adjust the candidate ranges below:
 |---|---|---|
 | Pressure altitude `h_press_ft` | 0 – 51,000 ft | Troposphere + lower stratosphere |
 | Equivalent airspeed `V_EAS_kts` | 50 – 500 kts | Adjust per aircraft type |
-| Load factor `n_z` | −3.0 – +4.0 | FAR 25 envelope; wider for FAR 23 acrobatic |
+| Load factor `n_z` | −1.0 – +2.5 | FAR 25 envelope; wider for FAR 23 acrobatic |
 | Angle of attack `alpha_deg` | −20 – +30 deg | |
 | Sideslip `beta_deg` | −30 – +30 deg | |
 | CG position `x_cg_ft` | Aircraft-specific | Define as % MAC range? |
 | Gross weight `W_lbf` | Aircraft-specific | Define bounds in condition list? |
 
-**Direction:** [ ]
+**Direction:** [x] CG range: 5–60% MAC (fraction 0.05–0.60 of `x_cg_nd`).
+Gross weight: aircraft-specific MFL (Minimum Flight Weight) through MRW (Maximum
+Ramp Weight); bounds supplied via aircraft config. Out-of-range inputs are not
+rejected outright — the TUI flags the value in yellow and asks the user to
+confirm before continuing. Hard validation limits (absolute min/max) are as
+documented in `doc/ui.md §Numeric input validation ranges`.
 
 ---
 
@@ -1118,7 +1172,23 @@ tab-completion over the whole filesystem.
 
 **Option C — Mixed: default to data/ subdirectory, allow free-path override.**
 
-**Direction:** [ ]
+**Direction:** [x] The data root is a free-path selected by the user and stored
+as `"data_root"` in `config/defaults.json` (default: `"data/"`). Within that
+root the directory structure is fixed and constrained:
+
+```
+<data_root>/
+├── aero/               — aerodynamic database files
+├── mass/               — NASTRAN CONM2 mass model files
+├── gear/               — landing gear design data (stroke, efficiency)
+├── lra/                — loads reference axis JSON files
+├── conditions/         — condition list CSVs (six analysis-type subdirectories)
+├── outputs/            — generated results (not committed to version control)
+└── data_summary.json   — provenance: source, analyst name, analysis intent
+```
+
+`data_summary.json` is read at session start and its key fields (analyst, date,
+project) are displayed in the TUI header and echoed into `analysis_summary_*.out`.
 
 ---
 
@@ -1139,7 +1209,9 @@ and return to the menu. Engineer must investigate before re-running.
 Same as Option A but also writes the condition ID, residuals, and last
 iteration state to `data/outputs/non_convergence.log`.
 
-**Direction:** [ ]
+**Direction:** [x] Option A — warn and skip. See `doc/architecture.md
+§Non-convergence` and `doc/ui.md §Non-convergence display` for the exact
+warning text and batch summary behavior.
 
 ---
 
@@ -1154,7 +1226,8 @@ restart the program.
 A "Load aircraft configuration" menu item allows switching aircraft mid-session.
 Requires the application to hold the active configuration in a session state object.
 
-**Direction:** [ ]
+**Direction:** [x] Option A — single aircraft per session. Aircraft configuration
+is fixed at startup. To switch configurations, restart the program.
 
 ---
 
@@ -1176,7 +1249,9 @@ Report the worst of: (roll alone), (pull-up alone), (roll + pull-up combined).
 Industry standard for rolling pull-out is direct superposition (Option A)
 per FAR 25.349. Confirm this applies.
 
-**Direction:** [ ]
+**Direction:** [x] Option A — direct algebraic superposition per FAR 25.349.
+The roll-rate (antisymmetric) and pull-up (symmetric) section loads are summed
+at each LRA station. SRSS is not used.
 
 ---
 
@@ -1193,7 +1268,18 @@ Example: `B737_COND042_wing_SMT_20260503_rev01.csv`
 Alternatively, use a flat output directory with a manifest JSON that maps
 condition IDs to filenames.
 
-**Direction:** [ ]
+**Direction:** [x] One file per load case covering all surfaces (wing, fuselage,
+vertical tail, horizontal tail, gear where applicable). Naming:
+
+```
+<aircraft_id>_<load_cycle_id>_<load_case_id>.dat     — NASTRAN FORCE/MOMENT cards
+<aircraft_id>_<load_cycle_id>_<component>_VMT.csv    — VMT section load table per surface
+```
+
+`load_cycle_id` is a short label entered by the user in the TUI just before the
+output write (e.g. `rev01`, `CycleA`). It provides traceability across analysis
+iterations without a date in the filename. The `component` token is the surface
+tag (e.g. `wing`, `htail`, `vtail`).
 
 ---
 
@@ -1210,7 +1296,10 @@ of all inputs used.
 **Option B — User-managed; no program enforcement.**
 Version control is the user's responsibility via git or file naming.
 
-**Direction:** [ ]
+**Direction:** [x] Option B — version control is the user's responsibility.
+Each output write session produces `analysis_summary_<YYYYMMDD>.out` listing
+every input file used (path and last-modified timestamp). This file is written
+to `<data_root>/outputs/` alongside the load output files.
 
 ---
 
@@ -1224,4 +1313,71 @@ if any required category is absent.
 **Option B — Coverage is the engineer's responsibility.**
 The program runs whatever conditions are in the list without checking completeness.
 
-**Direction:** [ ]
+**Direction:** [x] Option B — FAR coverage validation is the responsibility of
+the LOAD_CASE project and the responsible engineer. WBT_LOADS validates only
+the column schema of the input CSV (required columns present, correct types,
+SI units).
+
+---
+
+## 29. Case Review and VMT Comparison
+
+After a batch run, analysts need to inspect individual load cases and compare
+multiple conditions to understand which is critical and why. They also need to
+see aerodynamic and inertia contributions separately to validate the physics.
+
+This requirement originated in §9 (Run Mode) and is separated here for proper
+scoping.
+
+**Option A — Integrated TUI "Review cases" menu item.**
+After a batch run, or on re-entry from the main menu using a previously written
+output CSV, the user selects "Review cases" to open a sub-menu with:
+1. Single case VMT (shear, moment, torque vs. spanwise station)
+2. Overlay multiple conditions on one plot
+3. Single condition plotted against a prior envelope CSV
+
+Inertia and aerodynamic contributions displayed as separate series on each plot.
+All charts via `plt.show()` per Decision 20.
+
+**Option B — Standalone `tools/plot_vmt.py` script only.**
+Not integrated into the TUI. User runs the script against the output VMT CSV
+independently after the session.
+
+**Option C — Both A and B.**
+TUI integration for interactive session use; tools/ script for offline/scripted
+comparison workflows.
+
+**Direction:** [x] Option C — `tools/plot_vmt.py` is a standalone CLI script that
+can be run independently against any saved VMT CSV; the TUI "Review cases" menu
+item provides the same three functions (single case, overlay, vs envelope) in an
+interactive session. See `doc/ui.md §VMT / SMT charts` (TUI helpers) and
+`doc/architecture.md §tools/plot_vmt.py` (standalone script).
+
+---
+
+## 30. Atmospheric Model — Implementation Strategy
+
+Decision §19 establishes US Standard Atmosphere 1976 as the authoritative
+atmospheric model. This decision covers how `src/atmos.py` is implemented.
+
+The ATMOS project at `/Users/seanomeara/Documents/99-Tests/atmos/20_ATMOS`
+contains candidate implementation code.
+
+**Option A — Port ATMOS routines into `src/atmos.py`.**
+WBT_LOADS is fully self-contained; no runtime dependency on ATMOS. Requires
+a code-quality review of ATMOS before porting. Best if ATMOS code is clean
+and well-tested.
+
+**Option B — Call ATMOS as an installed external dependency (like sbeam).**
+Atmosphere code is maintained in one place across projects. Adds a runtime
+dependency; ATMOS must be `pip install -e` installed alongside WBT_LOADS.
+
+**Option C — Implement US Standard Atmosphere 1976 directly in `src/atmos.py`.**
+The standard troposphere/stratosphere equations are well-known and short (~50
+lines). Self-contained, no dependency, no code review required. Subsonic range
+only (sea level to ~51 000 ft / 15 545 m) keeps the scope minimal.
+
+**Direction:** [x] Option C — implement US Standard Atmosphere 1976 directly in
+`src/atmos.py`. The module is self-contained: it imports only `math` and `numpy`
+(no other WBT_LOADS modules) so it can be imported and used independently of the
+rest of the program. See `doc/architecture.md §src/atmos.py`.

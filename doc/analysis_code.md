@@ -1,8 +1,9 @@
 # Analysis Code Standards — Variable Naming and Methods
 
-Applies to all computation modules: `aero_db.py`, `mass_model.py`, `lra.py`,
-`trim.py`, `maneuver.py`, `gust.py`, `ground.py`, `loads.py`, `aeroelastic.py`,
-`beam.py`, and any helper functions called from them. UI and menu code is excluded.
+Applies to all computation modules: `atmos.py`, `aero_db.py`, `mass_model.py`,
+`lra.py`, `trim.py`, `maneuver.py`, `gust.py`, `ground.py`, `loads.py`,
+`aero_trim.py`, `aeroelastic.py`, `beam.py`, and any helper functions called
+from them. UI and menu code is excluded.
 
 ---
 
@@ -293,7 +294,7 @@ Project-specific quantities not in the CSV, following the same naming convention
 | Bending stiffness | `ei_nm2` | N·m² |
 | Torsional stiffness | `gj_nm2` | N·m² |
 | Axial stiffness | `ea_n` | N |
-| Flexibility matrix | `f_flex` | m/N or m/(N·m) depending on load type |
+| Flexibility matrix | `f_flex` | Interleaved transverse/rotation DOFs; entries m/N (disp/force), rad/(N·m) (rot/moment), m/(N·m) or rad/N (cross terms). See `doc/variable_definition.md §Flexibility matrix specification`. |
 | Aeroelastic effectiveness (control) | `e_flex_nd` | dimensionless, ≤ 1.0 |
 
 ---
@@ -306,10 +307,14 @@ convention:
 
 ```python
 G_M_S2        = 9.80665      # gravitational acceleration, m/s²
-RHO_0_KG_M3   = 1.2250       # sea-level air density, kg/m³
-P_0_PA        = 101325.0     # sea-level static pressure, Pa
+RHO_0_KG_M3   = 1.2250       # sea-level air density, kg/m³  (US Standard Atmosphere 1976)
+P_0_PA        = 101325.0     # sea-level static pressure, Pa (US Standard Atmosphere 1976)
+T_0_K         = 288.15       # sea-level temperature, K       (US Standard Atmosphere 1976)
 GAMMA         = 1.4          # ratio of specific heats (dimensionless — no suffix)
 ```
+
+Atmospheric model: US Standard Atmosphere 1976 (Decision 19). See also the ATMOS
+project reference in `doc/variable_definition.md §Module-level constants`.
 
 Tunable solver parameters (tolerances, iteration limits) belong in
 `config/defaults.json`, not as module-level constants.
@@ -986,6 +991,43 @@ The sections below describe each computation module's role, allowed imports,
 and internal behavior. These are the implementation counterpart to the analysis
 method descriptions above.
 
+### `atmos.py` — US Standard Atmosphere 1976 (Decision 30)
+
+Implements altitude-dependent atmospheric properties for the subsonic flight
+envelope (sea level to ~15 545 m / ~51 000 ft). All equations follow US
+Standard Atmosphere 1976 (troposphere: lapse rate 6.5 K/km; lower stratosphere:
+isothermal at 216.65 K above 11 000 m).
+
+Public functions (SI inputs and outputs throughout):
+
+| Function | Returns | Notes |
+|---|---|---|
+| `temperature(h_m)` | `t_k` | K; troposphere and stratosphere branches |
+| `pressure(h_m)` | `p_static_pa` | Pa |
+| `density(h_m)` | `rho_kg_m3` | kg/m³; used by `trim.py`, `gust.py` |
+| `speed_of_sound(h_m)` | `a_m_s` | m/s; used for Mach in `trim.py` |
+| `eas_to_tas(v_eas_m_s, h_m)` | `v_tas_m_s` | m/s; σ = ρ/ρ₀ |
+| `dynamic_pressure(v_tas_m_s, h_m)` | `q_dyn_pa` | Pa; `0.5 × ρ × V_TAS²` |
+
+Module-level constants (literals, no imports):
+```python
+T_0_K       = 288.15     # sea-level temperature, K
+P_0_PA      = 101325.0   # sea-level pressure, Pa
+RHO_0_KG_M3 = 1.225      # sea-level density, kg/m³
+L_K_M       = 0.0065     # tropospheric lapse rate, K/m
+G_M_S2      = 9.80665    # standard gravity, m/s²
+R_J_KGK     = 287.058    # specific gas constant, J/(kg·K)
+GAMMA       = 1.4        # ratio of specific heats
+```
+
+**Allowed to import:** `math`, `numpy` — nothing else. No WBT_LOADS imports.
+
+**Independence guarantee:** `atmos.py` is safe to import and use in any Python
+environment that has `numpy`, without installing or importing any other
+WBT_LOADS module. Users may call it from standalone tools or scripts.
+
+---
+
 ### `aero_db.py` — Aerodynamic database interpolation
 
 Loads strip load tables (`cn_sec_nd`, `cm_sec_nd`, `cc_sec_nd`) and incremental
@@ -1120,14 +1162,49 @@ using `FPS_M_S` from `unit_convert.py` before this formula.
 
 ---
 
+### `gust.py` — Gust loads
+
+Used by: dynamic flight loads (§b). Implements two Phase 1 gust paths.
+
+**Static equivalent discrete gust (§b2):** takes `u_gust_m_s`, `v_eas_m_s`,
+`rho_kg_m3`, `mac_m`, `s_ref_m2`, `m_ac_kg`, and `a_slope_nd` from the trim
+state. Returns `delta_nz_nd` as an increment on the trim load factor passed
+to `loads.py`. Routing: `maneuver_type` in
+`{discrete_gust_vertical, discrete_gust_lateral}`.
+
+**2-DOF continuous turbulence (§b3):** assembles the plunge-pitch system from
+aircraft mass properties and strip-theory derivatives, computes complex FRFs
+`h_nz_nd` and `h_my_nm` over the frequency grid, integrates the Von Kármán
+PSD, and returns RMS loads `sigma_nz_nd` and `sigma_my_nm` and design limit
+loads (`k_sigma_nd × σ`). Routing: `maneuver_type == continuous_turbulence`.
+
+Phase 2 paths (1-cosine TDG, DLM PSD FRFs) are placeholders; the
+`h_gust_m` and `n_gust_steps` condition columns are parsed but not used.
+
+**Allowed to import:** `aero_db`, `mass_model`, `lra`, `numpy`, `scipy`,
+`unit_convert`, `config`
+
+**Must not import:** `trim`, `maneuver`, `ground`, `loads`, `aeroelastic`, `beam`
+
+---
+
 ### `loads.py` — Loads summation
 
 The final summation step for all four analysis methods. Receives the flight or
 ground state as arguments (not by importing `trim` or `maneuver` directly).
 
+**Trim state passing (Decision 12):** `loads.py` does not import `trim.py`.
+`menu.py` (or `aero_trim.py` for aeroelastic cases) calls `trim.solve_trim(...)`
+and passes the resulting trim state dict directly to `loads.compute_loads(trim_state, ...)`.
+No upward import dependency is introduced.
+
 **Aerodynamic contribution (flight loads):** integrates `cn_sec_nd`, `cm_sec_nd`,
 `cc_sec_nd` arrays multiplied by `q_dyn_pa` and local chord over each strip panel
-(trapezoid rule), then sums to LRA section cuts via `lra.sum_to_lra`.
+using the **trapezoidal rule** (Decision 18):
+```
+dF = 0.5 × (f[i] + f[i+1]) × (y[i+1] − y[i])
+```
+Summed to LRA section cuts via `lra.sum_to_lra` using the full 3-D moment arm.
 
 **Inertia contribution (all methods):** for each point mass, computes
 `f_inertia_n = m_ac_kg × G_M_S2 × nz_nd` (or `nx_nd`, `ny_nd` for ground
@@ -1153,8 +1230,11 @@ cards.
 ### `nastran_out.py` — NASTRAN FORCE/MOMENT card writer
 
 Formats the per-condition section load arrays from `loads.py` as NASTRAN bulk
-data cards and writes `data/outputs/<name>_loads.bdf`. No computation; pure
-formatting.
+data cards and writes `<data_root>/outputs/<aircraft_id>_<load_cycle_id>_<load_case_id>.dat`
+(one file per load case, all surfaces). Also writes
+`<aircraft_id>_<load_cycle_id>_<component>_VMT.csv` and
+`analysis_summary_<date>.out`. See `doc/architecture.md §CRITIC_LOADS interface`
+for the full naming convention. No computation; pure formatting.
 
 **FORCE card format (free-field):**
 `FORCE, SID, GID, 0, 1.0, vx_n, fy_n, vz_n`
@@ -1187,7 +1267,11 @@ Iterates between aerodynamic load and elastic deflection until convergence
 within `APP_CONFIG["flex_tol"]`.
 
 **Aeroelastic effectiveness:** `e_flex_nd = η_flexible / η_rigid` per control
-surface. Values below zero indicate control reversal; see decision.md §17.
+surface. When `e_flex_nd < 0` for any surface at any condition, `aeroelastic.py`
+raises `ValueError("Control reversal: <surface> at condition <ID> "
+"(e_flex_nd = <value>)")`. The calling `menu.py` handler catches this, prints
+`[red]Error: <message>[/red]`, and returns to the menu without writing output.
+Control reversal is treated as a hard error (Decision 17, Option C).
 
 **Jig shape:** backs out the unloaded geometry from the cruise trim condition
 by inverting the aero-structural coupling. The jig shape is the manufactured
@@ -1198,6 +1282,28 @@ load type), cruise trim state dict, baseline rigid section loads from `loads.py`
 
 **Outputs:** flexibility-corrected section load arrays, `e_flex_nd` per surface,
 jig shape station offsets in metres.
+
+---
+
+### `aero_trim.py` — Coupled aeroelastic trim (Decision 13)
+
+Used by: static flight loads (§a) when elastic corrections are active.
+`menu.py` calls `aero_trim.solve(...)` instead of calling `trim` and
+`aeroelastic` directly.
+
+**Convergence loop (internal):**
+1. `trim.solve_trim(h_m, v_eas_m_s, nz_nd, x_cg_m, ...)` → rigid trim state
+2. `aeroelastic.apply_corrections(rigid_state, f_flex, ...)` → deflected shape + corrected loads
+3. Repeat until section load change between iterations < `APP_CONFIG["flex_tol"]`
+   (max iterations: `APP_CONFIG["flex_max_iter"]`)
+
+**Purpose:** neither `trim.py` nor `aeroelastic.py` imports the other; the
+coupling loop lives here so both modules remain independent.
+
+**Allowed to import:** `trim`, `aeroelastic`, `aero_db`, `lra`, `numpy`,
+`scipy`, `unit_convert`, `config`
+
+**Must not contain:** display logic, ground load logic.
 
 ---
 
