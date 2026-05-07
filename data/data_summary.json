@@ -1,6 +1,8 @@
 {
-    "data_source": "",
-    "analyst": "",
-    "analysis_intent": "",
-    "aircraft_id": ""
+    "aircraft_id": "BAe146-sample",
+    "data_source": "synthetic-strip-theory",
+    "analyst": "generated",
+    "analysis_intent": "Development and unit-test dataset — not for regulatory use",
+    "aero_db_config": "power_on_flaps_0",
+    "aero_db_generator": "data/aero/generate_sample_aero.py"
 }
