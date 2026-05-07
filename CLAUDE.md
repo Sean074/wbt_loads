@@ -139,6 +139,24 @@ response is complete. Do not leave any of them stale.
 
 ---
 
+## Development step approval
+
+**Every development step — including all sub-steps, refactors, and documentation
+updates — MUST be explicitly approved or directed by the user before work begins.**
+
+Rules:
+- Do not begin implementing a development plan step unless the user has
+  explicitly said to proceed (e.g., "do step X", "implement this", "go ahead").
+- Do not chain steps together or advance to the next step automatically after
+  completing one. Always stop and report completion, then wait for the next
+  instruction.
+- Proposing or planning a step is allowed without approval. Writing code,
+  editing files, or modifying documentation requires user approval first.
+- If a step is discovered to have required sub-steps, list them and get approval
+  before executing any of them.
+
+---
+
 ## Regulatory context
 
 Load conditions are developed per:
