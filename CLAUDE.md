@@ -111,6 +111,7 @@ The `doc/` directory contains the authoritative standards for this project.
 | [`doc/aerospace_variables_reference.csv`](doc/aerospace_variables_reference.csv) | **Authoritative variable name registry** — every quantity's required Python identifier (`code_variable_name`), SI unit, and sign convention (`definition_of_positive`). Must be read before writing any computation code |
 | [`doc/loads_aero_db.md`](doc/loads_aero_db.md) | Aerodynamic database file format, column schema, interpolation method, Mach extrapolation policy — authoritative reference for `aero_db.py` |
 | [`doc/ui.md`](doc/ui.md) | TUI aesthetic, library roles, workflow pattern (input → analysis → output), colour palette, panel/table/prompt/navigation conventions, module structure, cross-platform notes |
+| [`doc/input_checks.md`](doc/input_checks.md) | **Authoritative specification for all six pre-analysis checks and the LRA geometry viewer** — purpose, input flow, analysis steps, output sequence, and UI function signatures for Checks 1–6 and the "L — View LRA" handler |
 
 ---
 

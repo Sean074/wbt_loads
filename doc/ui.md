@@ -343,125 +343,16 @@ tag and condition data as arguments, not a category ID.
 
 ---
 
-## Pre-Analysis Check 1 — Aero Data Review
+## Pre-analysis checks and LRA viewer
 
-Check 1 is the primary aerodynamic model verification step. Its input flow is
-two-stage by design, enforcing a clear separation between total-airplane
-aerodynamics and per-surface detail:
+The per-check specifications — inputs, analysis steps, output sequences, and
+UI function signatures for all six pre-analysis checks (Aero Data Review,
+Mass Data Review, VMT for User-Defined State, Trim Condition Check, Inertia VMT,
+Control Derivatives) and the LRA Geometry Viewer — are in
+**[`doc/input_checks.md`](input_checks.md)**.
 
-**Stage 1 — Total airplane composition (required):**
-
-```
-ui.select_total_airplane_files()
-```
-
-Presents all available baseline `aero_*.csv` files. The user must select every
-surface that contributes to the total airplane (wing, horizontal tail, vertical
-tail, fuselage). Selection of at least one surface is enforced — pressing Enter
-without a choice re-prompts with an error. The prompt text explicitly reads:
-`"Total Airplane Components — select ALL contributing surfaces"`.
-
-**Stage 2 — Detail surface (single-select from Stage 1 list):**
-
-```
-ui.select_detail_surface(airplane_paths)
-```
-
-Presents only the surfaces already selected in Stage 1. The user picks one for
-the detailed strip coefficient table and VMT plot. If only one surface was
-selected in Stage 1, this step is skipped automatically.
-
-**Why this order matters:**
-
-The total-airplane CL/CM vs alpha sweep and derivative table are computed from
-the Stage 1 set using baseline coefficients (no control-surface increments).
-The detail strip table and VMT are computed from the Stage 2 surface loaded
-with any control-surface increment files specified by the user. The two
-calculations are always kept separate so neither contaminates the other.
-
-**Output sequence for Check 1:**
-
-1. Confirmation line: `[cyan]Total airplane: N surface(s) — <names>[/cyan]`
-2. Strip coefficient table — detail surface at nominal (α, β, M)
-3. Integrated totals panel — detail surface lift, drag, pitching moment
-4. VMT plot — detail surface section loads at nominal state
-5. CL / CM vs α chart — total airplane, all Stage 1 surfaces summed, with
-   nominal α marked
-6. CY vs β chart — total airplane vtail side-force coefficient swept over the
-   vtail beta grid at nominal α and Mach; nominal β marked. Omitted if no vtail
-   surface is included in Stage 1.
-7. Airplane aerodynamic derivatives panel — CL0, CLα, CM0, CMα from linear
-   regression over the full alpha grid; CY0, CYβ from vtail beta sweep (when
-   vtail present)
-
----
-
-## LRA 3D viewer (Decision 31)
-
-The "L — View LRA" menu option offers two sub-choices:
-- **1 — Single surface**: displays the station table then opens a per-component
-  3D chart in the browser.
-- **2 — Total airplane**: scans `data/lra/lra_*.json`, loads every file, and
-  opens a combined multi-surface 3D chart in the browser.
-
-### Single-surface viewer
-
-`ui.show_lra_3d(surface: str, stations: list)` — one Plotly Scatter3d figure:
-- LRA spine: cyan connected line + markers at all station positions
-- Unit normals: gold line segments, each scaled to 8% of the spine
-  bounding-box diagonal
-- Station labels: white text beside each station (every other label when more
-  than 14 stations, to avoid overlap)
-
-### Combined airplane viewer
-
-`ui.show_lra_3d_airplane(surfaces: list[dict])` — one figure with all surfaces
-overlaid. Each surface gets a distinct spine colour and corresponding normal
-colour from a fixed palette. Station labels are shown for every surface (thinned
-when > 10 stations per surface). Legend entry per surface using the `surface`
-key from the LRA dict.
-
-```python
-ui.show_lra_3d_airplane(surfaces: list) -> None
-    # surfaces: list of dicts from lra.load_lra(), each with 'surface' and 'stations'
-```
-
-Chart display rules (both viewers):
-- Uses `fig.show()` (Plotly); opens the default browser automatically
-- The TUI prints `[cyan]Opening LRA 3D viewer in browser — close tab when done[/cyan]`
-  (single-surface) or `[cyan]Opening combined LRA viewer in browser — close tab when done[/cyan]`
-  (combined) before `fig.show()`
-- If `plotly` is not installed, prints `[red]Error: plotly unavailable: ...[/red]`
-  and returns to the menu
-- Equal spatial scale is enforced via `scene.aspectmode="data"` in the layout
-
----
-
-## Pre-Analysis Check 6 — Control Derivatives
-
-Check 6 computes and displays control surface effectiveness derivatives
-(dCL/dδ and dCM/dδ) by sweeping each selected control's deflection grid at a
-user-specified nominal flight state.
-
-**Inputs:** one baseline `aero_*.csv` + one or more `aero_incr_*.csv` increment
-files (required; re-prompts if none selected) + nominal state (α, β, altitude,
-airspeed, s_ref, MAC).
-
-**Analysis:** for each increment file, the deflection is swept from `defl_min_deg`
-to `defl_max_deg` (11 points minimum, or one point per degree) at the nominal
-state. CL and CM are computed at each point via `loads.compute_integrated_totals()`
-and a linear regression gives dCL/dδ and dCM/dδ in per-rad and per-deg.
-
-**Output:** `ui.print_control_derivatives_table(ctrl_derivs)` — one Rich panel
-titled `"Control Effectiveness Derivatives"` with columns Control / dCL/dδ /rad /
-dCL/dδ /deg / dCM/dδ /rad / dCM/dδ /deg. One row per increment file processed.
-
-```python
-ui.print_control_derivatives_table(ctrl_derivs: list) -> None
-    # ctrl_derivs: list of dicts with keys:
-    #   control_tag, dcl_ddelta_per_rad, dcl_ddelta_per_deg,
-    #   dcm_ddelta_per_rad, dcm_ddelta_per_deg
-```
+`doc/ui.md` documents TUI code standards only. `input_checks.md` is the
+authoritative reference for what each check does.
 
 ---
 
