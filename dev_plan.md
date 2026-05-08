@@ -5,9 +5,18 @@
 ### Implemented and complete
 - `main.py` — entry point, menu loop, handler dispatch
 - `src/ui.py` — full TUI display and prompt helpers
-- `src/menu.py` — menu structure, all five pre-analysis checks (aero review,
-  mass review, VMT state, rigid trim check, inertia VMT); SFL handler loads
-  conditions but has no computation; DFL/SGL/DGL/FLAPS handlers are stubs
+- `src/menu.py` — menu structure, all five pre-analysis checks:
+  - Check 1 Aero Data Review: two-stage input — (1) user selects ALL
+    component surfaces for total airplane (required, ≥1 enforced), (2) user
+    selects one of those for the detailed strip table / VMT. Outputs: strip
+    table + VMT for detail surface; total-airplane CL/CM vs alpha sweep plot
+    and derivative summary (CL_alpha, CM_alpha, CL0, CM0) from linear
+    regression over the full alpha grid with all selected surfaces summed.
+  - Check 2 Mass Data Review: weight, CG, inertia, 1g VMT
+  - Check 3 VMT for User-Defined State: validate aero model vs. CFD
+  - Check 4 Trim Condition Check: rigid alpha trim, Cm residual
+  - Check 5 Inertia VMT (1g): apply 1g load, plot inertia distribution
+  - SFL handler loads conditions but has no computation; DFL/SGL/DGL/FLAPS handlers are stubs
 - `src/atmos.py` — US Standard Atmosphere 1976
 - `src/aero_db.py` — aerodynamic database loader, 4-D/5-D interpolators,
   Prandtl-Glauert extrapolation, increment tables

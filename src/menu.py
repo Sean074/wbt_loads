@@ -154,14 +154,19 @@ def handle_precheck_menu() -> None:
 
 
 def handle_precheck_aero_review() -> None:
-    """Check 1: Load aero DB, display strip table and integrated totals, plot VMT."""
+    """Check 1: Total airplane CL/CM vs alpha and derivatives; per-surface strip table and VMT."""
+    import numpy as np
     from . import aero_db, lra, atmos, loads
     from .unit_convert import DEG_RAD, FT_M, KTS_M_S
 
     # --- INPUT ---
-    baseline_path = ui.select_aero_file()
-    if baseline_path is None:
+    # Step 1: all surfaces that compose the total airplane (required, ≥1)
+    airplane_paths = ui.select_total_airplane_files()
+    if not airplane_paths:
         return
+
+    # Step 2: one of those surfaces for detailed strip table / VMT display
+    baseline_path = ui.select_detail_surface(airplane_paths)
 
     incr_paths = ui.select_aero_incr_files()
 
@@ -182,7 +187,21 @@ def handle_precheck_aero_review() -> None:
                               600.0 if unit_v == "m/s" else 600.0 / KTS_M_S)
     v_eas_m_s = raw_v * KTS_M_S if unit_v == "kts" else raw_v
 
+    s_ref_m2 = ui.prompt_float("Wing reference area s_ref (m²)", 1.0, 2000.0)
+    mac_m    = ui.prompt_float("Mean aerodynamic chord MAC (m)", 0.1, 50.0)
+
     # --- ANALYSIS ---
+    # Load all airplane surfaces (baseline only — no increments — for total airplane sweep)
+    all_aero_dbs = []
+    for p in airplane_paths:
+        try:
+            all_aero_dbs.append(aero_db.load_aero_db(p))
+        except (FileNotFoundError, ValueError) as exc:
+            ui.print_error(str(exc))
+            ui.press_enter_to_continue()
+            return
+
+    # Load detail surface with control increments for strip table / VMT
     try:
         aero_db_data = aero_db.load_aero_db(baseline_path, incr_paths)
     except (FileNotFoundError, ValueError) as exc:
@@ -205,6 +224,7 @@ def handle_precheck_aero_review() -> None:
     alpha_rad = alpha_deg * DEG_RAD
     beta_rad  = beta_deg  * DEG_RAD
 
+    # Per-surface detail: strip coefficients and section loads at nominal state
     cn, cm, cc, pg_applied = aero_db.interpolate_strips(
         aero_db_data, alpha_rad, beta_rad, mach_nd
     )
@@ -222,14 +242,57 @@ def handle_precheck_aero_review() -> None:
         cn, cm, cc, aero_db_data["c_m"], aero_db_data["y_m"], q_dyn_pa, alpha_rad
     )
 
+    # Total airplane: sweep alpha across primary surface grid at nominal beta and mach
+    alpha_grid_deg = all_aero_dbs[0]["alpha_deg"]
+    cl_sweep = np.empty(len(alpha_grid_deg))
+    cm_sweep = np.empty(len(alpha_grid_deg))
+
+    for j, a_deg in enumerate(alpha_grid_deg):
+        a_rad = a_deg * DEG_RAD
+        total_lift_n = 0.0
+        total_m_nm   = 0.0
+        for db in all_aero_dbs:
+            cn_j, cm_j, cc_j, _ = aero_db.interpolate_strips(db, a_rad, beta_rad, mach_nd)
+            t = loads.compute_integrated_totals(
+                cn_j, cm_j, cc_j, db["c_m"], db["y_m"], q_dyn_pa, a_rad
+            )
+            total_lift_n += t["lift_n"]
+            total_m_nm   += t["m_pitch_nm"]
+        cl_sweep[j] = total_lift_n / (q_dyn_pa * s_ref_m2)
+        cm_sweep[j] = total_m_nm   / (q_dyn_pa * s_ref_m2 * mac_m)
+
+    # Linear regression over full alpha range for airplane derivatives
+    alpha_rad_arr = alpha_grid_deg * DEG_RAD
+    cl_slope, cl_intercept = np.polyfit(alpha_rad_arr, cl_sweep, 1)
+    cm_slope, cm_intercept = np.polyfit(alpha_rad_arr, cm_sweep, 1)
+    n_surfaces = len(all_aero_dbs)
+    derivatives = {
+        "cl0_nd":           cl_intercept,
+        "cl_alpha_per_rad": cl_slope,
+        "cl_alpha_per_deg": cl_slope * DEG_RAD,
+        "cm0_nd":           cm_intercept,
+        "cm_alpha_per_rad": cm_slope,
+        "cm_alpha_per_deg": cm_slope * DEG_RAD,
+    }
+
     # --- OUTPUT ---
+    surface_names = ", ".join(p.stem for p in airplane_paths)
+    ui.console.print(
+        f"[cyan]Total airplane: {n_surfaces} surface(s) — {surface_names}[/cyan]"
+    )
     ui.print_aero_strip_table(aero_db_data, cn, cm, cc, alpha_deg, beta_deg, mach_nd)
     ui.print_aero_totals(totals)
-    import numpy as np
     y_stations  = np.array([s["position_m"][1] for s in stations])
     station_ids = [s["station_id"] for s in stations]
     ui.show_vmt_plot(y_stations, station_ids, section_loads,
-                     title="Aero Data Review", surface=lra_data["surface"])
+                     title=f"Aero Review — {baseline_path.stem}", surface=lra_data["surface"])
+    config_tag = all_aero_dbs[0]["config_tag"]
+    ui.show_cl_cm_alpha_plot(
+        alpha_grid_deg, cl_sweep, cm_sweep,
+        nominal_alpha_deg=alpha_deg,
+        title=f"Total Airplane CL / CM vs α — {n_surfaces} surfaces ({config_tag})",
+    )
+    ui.print_aero_derivative_table(derivatives)
     ui.press_enter_to_continue()
 
 

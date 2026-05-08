@@ -343,6 +343,55 @@ tag and condition data as arguments, not a category ID.
 
 ---
 
+## Pre-Analysis Check 1 — Aero Data Review
+
+Check 1 is the primary aerodynamic model verification step. Its input flow is
+two-stage by design, enforcing a clear separation between total-airplane
+aerodynamics and per-surface detail:
+
+**Stage 1 — Total airplane composition (required):**
+
+```
+ui.select_total_airplane_files()
+```
+
+Presents all available baseline `aero_*.csv` files. The user must select every
+surface that contributes to the total airplane (wing, horizontal tail, vertical
+tail, fuselage). Selection of at least one surface is enforced — pressing Enter
+without a choice re-prompts with an error. The prompt text explicitly reads:
+`"Total Airplane Components — select ALL contributing surfaces"`.
+
+**Stage 2 — Detail surface (single-select from Stage 1 list):**
+
+```
+ui.select_detail_surface(airplane_paths)
+```
+
+Presents only the surfaces already selected in Stage 1. The user picks one for
+the detailed strip coefficient table and VMT plot. If only one surface was
+selected in Stage 1, this step is skipped automatically.
+
+**Why this order matters:**
+
+The total-airplane CL/CM vs alpha sweep and derivative table are computed from
+the Stage 1 set using baseline coefficients (no control-surface increments).
+The detail strip table and VMT are computed from the Stage 2 surface loaded
+with any control-surface increment files specified by the user. The two
+calculations are always kept separate so neither contaminates the other.
+
+**Output sequence for Check 1:**
+
+1. Confirmation line: `[cyan]Total airplane: N surface(s) — <names>[/cyan]`
+2. Strip coefficient table — detail surface at nominal (α, β, M)
+3. Integrated totals panel — detail surface lift, drag, pitching moment
+4. VMT plot — detail surface section loads at nominal state
+5. CL / CM vs α chart — total airplane, all Stage 1 surfaces summed, with
+   nominal α marked
+6. Airplane aerodynamic derivatives panel — CL0, CLα, CM0, CMα from linear
+   regression over the full alpha grid
+
+---
+
 ## LRA 3D viewer (Decision 31)
 
 The "L — View LRA" menu option displays a station table followed immediately by a

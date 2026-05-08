@@ -293,6 +293,91 @@ def select_aero_file():
         print_error(f"File not found: {raw}")
 
 
+def select_total_airplane_files() -> list:
+    """
+    Required multi-file selector for all surface baselines that compose the total airplane.
+
+    Re-prompts until at least one surface is selected.
+    Returns a list of Path objects (length ≥ 1).
+    """
+    from pathlib import Path
+    data_root = Path(APP_CONFIG["data_root"])
+    d = data_root / "aero"
+    if not d.exists():
+        print_error(f"Aero directory not found: {d}")
+        return []
+    files = sorted(f for f in d.glob("aero_*.csv") if not f.name.startswith("aero_incr_"))
+    if not files:
+        print_error("No baseline aero_*.csv files found.")
+        return []
+
+    tbl = Table(show_header=False, box=None, padding=(0, 2))
+    tbl.add_column("Key", style="cyan")
+    tbl.add_column("File")
+    for i, f in enumerate(files, 1):
+        tbl.add_row(str(i), f.name)
+    console.print(Panel(
+        tbl,
+        title="[bold]Total Airplane Components — select ALL contributing surfaces[/bold]",
+        border_style="cyan",
+    ))
+
+    while True:
+        raw = pt_prompt("Select surfaces (comma-separated indices, required): ").strip()
+        selected = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(files):
+                    selected.append(files[idx])
+                else:
+                    print_warning(f"Index {part} out of range — skipped")
+            else:
+                match = [f for f in files if f.name == part]
+                if match:
+                    selected.append(match[0])
+                else:
+                    print_warning(f"File not found: {part} — skipped")
+        if not selected:
+            print_error("At least one surface is required for total airplane aerodynamics.")
+            continue
+        # Deduplicate preserving order
+        seen = set()
+        unique = []
+        for p in selected:
+            if p not in seen:
+                seen.add(p)
+                unique.append(p)
+        return unique
+
+
+def select_detail_surface(paths: list):
+    """
+    Single-surface selector for the detailed strip table and VMT display.
+
+    Presents the paths already chosen for total airplane and returns one Path.
+    Returns paths[0] automatically when only one surface was selected.
+    """
+    if len(paths) == 1:
+        return paths[0]
+    tbl = Table(show_header=False, box=None, padding=(0, 2))
+    tbl.add_column("Key", style="cyan")
+    tbl.add_column("File")
+    for i, p in enumerate(paths, 1):
+        tbl.add_row(str(i), p.name)
+    console.print(Panel(tbl, title="[bold]Detail Surface — strip table and VMT[/bold]", border_style="cyan"))
+    while True:
+        raw = pt_prompt("Select surface for detailed review: ").strip()
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(paths):
+                return paths[idx]
+        print_error(f"Enter a number between 1 and {len(paths)}.")
+
+
 def select_condition_csv(analysis_type: str):
     from pathlib import Path
     subdir = CATEGORY_SUBDIR[analysis_type]
@@ -416,7 +501,7 @@ def print_precheck_menu() -> None:
     tbl = Table(show_header=False, box=None, padding=(0, 2))
     tbl.add_column("Key", style="cyan")
     tbl.add_column("Check")
-    tbl.add_row("1", "Aero Data Review — strip table + VMT at selected state")
+    tbl.add_row("1", "Aero Data Review — total airplane CL/CM vs α, derivatives, strip table")
     tbl.add_row("2", "Mass Data Review — weight, CG, inertia + 1g VMT")
     tbl.add_row("3", "VMT for User-Defined State — validate aero model vs. CFD")
     tbl.add_row("4", "Trim Condition Check — rigid alpha trim, Cm residual")
@@ -546,6 +631,20 @@ def print_aero_totals(totals: dict) -> None:
     console.print(Panel(tbl, title="[bold]Integrated Totals[/bold]", border_style="cyan"))
 
 
+def print_aero_derivative_table(derivatives: dict) -> None:
+    """Display airplane aerodynamic derivatives from linear regression over the alpha grid."""
+    tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    tbl.add_column("Quantity", style="cyan", justify="right")
+    tbl.add_column("Value",    justify="right")
+    tbl.add_row("CL0",           f"{derivatives['cl0_nd']:.4f}")
+    tbl.add_row("CLα (per rad)", f"{derivatives['cl_alpha_per_rad']:.4f}")
+    tbl.add_row("CLα (per deg)", f"{derivatives['cl_alpha_per_deg']:.4f}")
+    tbl.add_row("CM0",           f"{derivatives['cm0_nd']:.4f}")
+    tbl.add_row("CMα (per rad)", f"{derivatives['cm_alpha_per_rad']:.4f}")
+    tbl.add_row("CMα (per deg)", f"{derivatives['cm_alpha_per_deg']:.4f}")
+    console.print(Panel(tbl, title="[bold]Airplane Aerodynamic Derivatives[/bold]", border_style="cyan"))
+
+
 def print_mass_summary(mass_model: dict) -> None:
     """Display total mass, weight, CG, and inertia tensor."""
     from .unit_convert import N_LBF, M_FT
@@ -617,15 +716,19 @@ def show_vmt_plot(
     """
     Open a matplotlib figure with three subplots: Vz, Mx, My vs. spanwise station.
 
-    Computes running shear and moment by integrating the per-station load
-    concentrations from tip to root (cumulative sum from outboard to inboard).
+    Computes running shear and moment by integrating each semi-span independently
+    from its own tip to root (left semi-span: forward cumsum from most-negative y;
+    right semi-span: reverse cumsum from most-positive y).
 
     Handles headless environments by catching RuntimeError and printing an error.
     """
     import numpy as np
     try:
         import matplotlib
-        if _try_display():
+        import sys, os
+        if sys.platform == "darwin":
+            matplotlib.use("macosx")
+        elif os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
             matplotlib.use("TkAgg")
         else:
             matplotlib.use("Agg")
@@ -647,18 +750,39 @@ def show_vmt_plot(
     mx_st = sl_sorted[:, 3]  # per-station Mx concentrations
     my_st = sl_sorted[:, 4]  # per-station My concentrations
 
-    # Running shear: V[j] = Σ_{k>=j} Vz[k]  (tip to root)
-    vz_run = np.cumsum(vz_st[::-1])[::-1]
+    # Running sums per semi-span: each half integrates from its own tip toward root.
+    # Right (y >= 0): outboard is +y → reverse cumsum.
+    # Left  (y <  0): outboard is -y (tip at lowest y) → forward cumsum.
+    # Bending moment arm differs between halves: right uses (y[k]-y[j]), left uses (y[j]-y[k]).
+    right_mask = y_sorted >= 0.0
+    left_mask  = ~right_mask
 
-    # Running bending moment: M[j] = Σ_{k>=j} (Vz[k]×(y[k]-y[j]) + Mx[k])
-    # Efficient O(N): M[j] = (Σ_{k>=j} Vz[k]×y[k]) − y[j]×V[j] + (Σ_{k>=j} Mx[k])
-    vzy = vz_st * y_sorted
-    s_vzy  = np.cumsum(vzy[::-1])[::-1]
-    s_mx   = np.cumsum(mx_st[::-1])[::-1]
-    mx_run = s_vzy - y_sorted * vz_run + s_mx
+    vz_run = np.empty(N)
+    mx_run = np.empty(N)
+    my_run = np.empty(N)
 
-    # Running torsion: T[j] = Σ_{k>=j} My[k]
-    my_run = np.cumsum(my_st[::-1])[::-1]
+    for mask, reverse in [(right_mask, True), (left_mask, False)]:
+        if not np.any(mask):
+            continue
+        y_h  = y_sorted[mask]
+        vz_h = vz_st[mask]
+        mx_h = mx_st[mask]
+        my_h = my_st[mask]
+        if reverse:
+            vz_r = np.cumsum(vz_h[::-1])[::-1]
+            sv   = np.cumsum((vz_h * y_h)[::-1])[::-1]
+            sm   = np.cumsum(mx_h[::-1])[::-1]
+            mx_r = sv - y_h * vz_r + sm
+            my_r = np.cumsum(my_h[::-1])[::-1]
+        else:
+            vz_r = np.cumsum(vz_h)
+            sv   = np.cumsum(vz_h * y_h)
+            sm   = np.cumsum(mx_h)
+            mx_r = -sv + y_h * vz_r + sm
+            my_r = np.cumsum(my_h)
+        vz_run[mask] = vz_r
+        mx_run[mask] = mx_r
+        my_run[mask] = my_r
 
     ids = [station_ids[i] for i in sort_idx]
 
@@ -693,12 +817,57 @@ def show_vmt_plot(
         plt.close("all")
 
 
-def _try_display() -> bool:
-    """Return True if a graphical display is likely available."""
-    import os
-    import sys
-    return (
-        sys.platform == "darwin"
-        or bool(os.environ.get("DISPLAY"))
-        or bool(os.environ.get("WAYLAND_DISPLAY"))
-    )
+def show_cl_cm_alpha_plot(
+    alpha_deg,
+    cl_nd,
+    cm_nd,
+    nominal_alpha_deg: float,
+    title: str,
+) -> None:
+    """Plot total-airplane CL and CM vs alpha with the nominal condition marked."""
+    import numpy as np
+    try:
+        import matplotlib
+        import sys, os
+        if sys.platform == "darwin":
+            matplotlib.use("macosx")
+        elif os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            matplotlib.use("TkAgg")
+        else:
+            matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print_error(f"matplotlib unavailable: {exc}")
+        return
+
+    alpha_deg = np.asarray(alpha_deg, dtype=float)
+    cl_nd     = np.asarray(cl_nd, dtype=float)
+    cm_nd     = np.asarray(cm_nd, dtype=float)
+
+    try:
+        fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+        fig.suptitle(title, fontsize=12)
+
+        axes[0].plot(alpha_deg, cl_nd, color="#00bfff", marker="o", markersize=4, linewidth=1.5)
+        axes[0].axvline(nominal_alpha_deg, color="#ffd700", linewidth=1.0, linestyle="--",
+                        label=f"α = {nominal_alpha_deg:.1f}°")
+        axes[0].set_ylabel("CL [–]")
+        axes[0].legend(fontsize=8)
+        axes[0].axhline(0, color="white", linewidth=0.5)
+        axes[0].grid(True, alpha=0.3)
+
+        axes[1].plot(alpha_deg, cm_nd, color="#ff8c00", marker="o", markersize=4, linewidth=1.5)
+        axes[1].axvline(nominal_alpha_deg, color="#ffd700", linewidth=1.0, linestyle="--")
+        axes[1].set_ylabel("CM [–]")
+        axes[1].set_xlabel("α [deg]")
+        axes[1].axhline(0, color="white", linewidth=0.5)
+        axes[1].grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        console.print("[cyan]Displaying CL/CM vs α chart — close window to continue[/cyan]")
+        plt.show()
+    except RuntimeError as exc:
+        print_error(f"No display available for chart: {exc}")
+    finally:
+        plt.close("all")
+

@@ -14,6 +14,7 @@ positive in the drag direction per body-axis convention).
 """
 
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -39,7 +40,7 @@ _INCR_REQUIRED = {
 
 def load_aero_db(
     baseline_path: Path,
-    incr_paths: list | None = None,
+    incr_paths: Optional[list] = None,
 ) -> dict:
     """
     Load baseline and optional increment aerodynamic databases.
@@ -116,7 +117,7 @@ def interpolate_strips(
     alpha_rad: float,
     beta_rad: float,
     mach_nd: float,
-    deflections_rad: dict | None = None,
+    deflections_rad: Optional[dict] = None,
 ) -> tuple:
     """
     Evaluate strip coefficients at a flight state.
