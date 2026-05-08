@@ -5,17 +5,19 @@
 ### Implemented and complete
 - `main.py` — entry point, menu loop, handler dispatch
 - `src/ui.py` — full TUI display and prompt helpers
-- `src/menu.py` — menu structure, all five pre-analysis checks:
+- `src/menu.py` — menu structure, all six pre-analysis checks:
   - Check 1 Aero Data Review: two-stage input — (1) user selects ALL
     component surfaces for total airplane (required, ≥1 enforced), (2) user
     selects one of those for the detailed strip table / VMT. Outputs: strip
-    table + VMT for detail surface; total-airplane CL/CM vs alpha sweep plot
-    and derivative summary (CL_alpha, CM_alpha, CL0, CM0) from linear
-    regression over the full alpha grid with all selected surfaces summed.
+    table + VMT for detail surface; total-airplane CL/CM vs alpha sweep plot,
+    CY vs beta sweep plot (vtail present), and derivative summary (CL_alpha,
+    CM_alpha, CL0, CM0, CY_beta, CY0) from linear regression.
   - Check 2 Mass Data Review: weight, CG, inertia, 1g VMT
   - Check 3 VMT for User-Defined State: validate aero model vs. CFD
   - Check 4 Trim Condition Check: rigid alpha trim, Cm residual
   - Check 5 Inertia VMT (1g): apply 1g load, plot inertia distribution
+  - Check 6 Control Derivatives: dCL/dδ and dCM/dδ per control from
+    deflection sweep at a user-specified nominal state
   - SFL handler loads conditions but has no computation; DFL/SGL/DGL/FLAPS handlers are stubs
 - `src/atmos.py` — US Standard Atmosphere 1976
 - `src/aero_db.py` — aerodynamic database loader, 4-D/5-D interpolators,
@@ -25,8 +27,11 @@
 - `src/mass_model.py` — NASTRAN CONM2 parser (small-field + free-field)
 - `src/condition.py` — condition CSV parser for types A–E, degree→radian conversion
 - `src/lra.py` — LRA loader, `resolve_position`, `sum_to_lra`
-- `ui.show_lra_3d` — 3D Plotly viewer for LRA spine and unit normals
-  (invoked from "L — View LRA" after the station table; opens in browser)
+- `ui.show_lra_3d` — per-component 3D Plotly viewer for LRA spine and unit normals
+  (invoked from "L — View LRA" → option 1; opens in browser)
+- `ui.show_lra_3d_airplane` — combined multi-surface Plotly viewer showing all
+  LRA spines overlaid with distinct colours per surface (invoked from "L — View
+  LRA" → option 2; auto-loads all `data/lra/lra_*.json` files)
 - `src/unit_convert.py` — conversion constants
 - `src/config.py` — config loader
 - `data/lra/` — four surface LRA JSON files (wing, htail, vtail, fuselage)
@@ -222,11 +227,22 @@ GID = 1-based LRA station index matching the surface JSON file order.
 - `.dat` output parses as valid NASTRAN free-field; SIDs 1, 2, 10001, 10002 present.
 - VMT CSV has correct headers and row count = n_stations × n_conditions.
 
+**Additional Step 3 requirements (from WBT_Loads.md rev.):**
+- All NASTRAN output cards must be labeled as ultimate loads (ULT/ULTIMATE) per
+  the WBT_Loads.md output policy.
+- Write a per-batch airplane state summary file (.csv or .out) alongside the
+  NASTRAN cards containing: condition_id, alpha_rad, beta_rad, control
+  deflections, v_eas_m_s, mach_nd, h_m, nz_nd, inertia accelerations.
+- FOS is read from `APP_CONFIG["fos_nd"]` (default 1.5 in `config/defaults.json`);
+  no hardcoded 1.5 literals.
+
 **Acceptance criteria:**
 - Output `.dat` file for two conditions parses as valid NASTRAN free-field
-  with the correct SID values (1 and 2 for limit; 10001 and 10002 for ultimate).
+  with the correct SID values (1 and 2 for limit; 10001 and 10002 for ultimate);
+  ultimate blocks are labeled ULT.
 - VMT CSV contains correct column headers and one row per LRA station per
   condition.
+- State summary file is written alongside the `.dat` with one row per condition.
 - `pytest tests/test_nastran_out.py` passes with no failures.
 
 **Dependencies:** Step 2 (result dict keys).
@@ -733,6 +749,12 @@ python tools/plot_vmt.py --file <path_to_VMT.csv>
 
 ## Deferred (Phase 2)
 
+- **Fuselage Cy/Cz aerodynamic model** — fuselage uses body-force coefficients
+  (Cz body-z, Cy body-y) rather than Cn/Cm/Cc strip coefficients. Requires a new
+  CSV schema (`y_fus_m`, `alpha_deg`, `beta_deg`, `mach_nd`, `cz_sec_nd`,
+  `cy_sec_nd`), extended `aero_db.load_aero_db()` to detect the fuselage format,
+  and extended sweep loops in Check 1 and Check 6 to include fuselage
+  contributions to total-airplane CL and CY.
 - Category E — Flap / High-Lift Loads (`handle_flaps_deferred` shows deferred
   message; `data/conditions/flap/` subdirectory is reserved but empty in Phase 1).
   Implementation requires: `loads.compute_flap_loads()`, sample condition CSV

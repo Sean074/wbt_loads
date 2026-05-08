@@ -195,6 +195,96 @@ def show_lra_3d(surface: str, stations: list) -> None:
     fig.show()
 
 
+def show_lra_3d_airplane(surfaces: list) -> None:
+    """
+    Open a combined Plotly Scatter3d figure showing all LRA spines together.
+
+    surfaces: list of dicts from lra.load_lra(), each with 'surface' and 'stations' keys.
+    """
+    import numpy as np
+    try:
+        import plotly.graph_objects as go
+    except ImportError as exc:
+        print_error(f"plotly unavailable: {exc}")
+        return
+
+    _SPINE_COLORS  = ["#00bfff", "#ff8c00", "#9acd32", "#ff69b4", "#da70d6", "#ffd700"]
+    _NORMAL_COLORS = ["#7fffff", "#ffc040", "#c8ff60", "#ffa0d0", "#e8b0ff", "#fff060"]
+
+    all_traces = []
+    for idx, surf_data in enumerate(surfaces):
+        surf_name  = surf_data["surface"]
+        stations   = surf_data["stations"]
+        spine_col  = _SPINE_COLORS[idx % len(_SPINE_COLORS)]
+        normal_col = _NORMAL_COLORS[idx % len(_NORMAL_COLORS)]
+
+        xs = np.array([s["position_m"][0] for s in stations])
+        ys = np.array([s["position_m"][1] for s in stations])
+        zs = np.array([s["position_m"][2] for s in stations])
+        us = np.array([s["normal_nd"][0] for s in stations])
+        vs = np.array([s["normal_nd"][1] for s in stations])
+        ws = np.array([s["normal_nd"][2] for s in stations])
+
+        diag = float(np.sqrt(np.ptp(xs)**2 + np.ptp(ys)**2 + np.ptp(zs)**2))
+        arrow_scale = max(diag * 0.08, 0.5)
+
+        all_traces.append(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode="lines+markers",
+            line=dict(color=spine_col, width=4),
+            marker=dict(size=4, color=spine_col),
+            name=surf_name,
+        ))
+
+        nx_seg, ny_seg, nz_seg = [], [], []
+        for i in range(len(stations)):
+            nx_seg += [xs[i], xs[i] + us[i] * arrow_scale, None]
+            ny_seg += [ys[i], ys[i] + vs[i] * arrow_scale, None]
+            nz_seg += [zs[i], zs[i] + ws[i] * arrow_scale, None]
+
+        all_traces.append(go.Scatter3d(
+            x=nx_seg, y=ny_seg, z=nz_seg,
+            mode="lines",
+            line=dict(color=normal_col, width=2),
+            name=f"{surf_name} normal",
+            opacity=0.75,
+            showlegend=False,
+        ))
+
+        step = 1 if len(stations) <= 10 else 2
+        all_traces.append(go.Scatter3d(
+            x=xs[::step], y=ys[::step], z=zs[::step],
+            mode="text",
+            text=[s["station_id"] for s in stations[::step]],
+            textfont=dict(size=8, color="white"),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    _bg = "#1a1a1a"
+    _ax = dict(color="white", gridcolor="rgba(255,255,255,0.12)",
+               showbackground=True, backgroundcolor=_bg)
+
+    fig = go.Figure(data=all_traces)
+    fig.update_layout(
+        title=dict(text="LRA — Total Airplane", font=dict(color="white")),
+        paper_bgcolor=_bg,
+        scene=dict(
+            bgcolor=_bg,
+            xaxis=dict(title="x (m)", **_ax),
+            yaxis=dict(title="y (m)", **_ax),
+            zaxis=dict(title="z (m)", **_ax),
+            aspectmode="data",
+        ),
+        legend=dict(font=dict(color="white"), bgcolor="#2a2a2a",
+                    bordercolor="#00bfff"),
+        font=dict(color="white"),
+    )
+
+    console.print("[cyan]Opening combined LRA viewer in browser — close tab when done[/cyan]")
+    fig.show()
+
+
 def print_condition_table(conditions_df) -> None:
     tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     display_cols = [c for c in conditions_df.columns if not c.endswith("_rad")]
@@ -501,11 +591,12 @@ def print_precheck_menu() -> None:
     tbl = Table(show_header=False, box=None, padding=(0, 2))
     tbl.add_column("Key", style="cyan")
     tbl.add_column("Check")
-    tbl.add_row("1", "Aero Data Review — total airplane CL/CM vs α, derivatives, strip table")
+    tbl.add_row("1", "Aero Data Review — total airplane CL/CM vs α, CY vs β, derivatives, strip table")
     tbl.add_row("2", "Mass Data Review — weight, CG, inertia + 1g VMT")
     tbl.add_row("3", "VMT for User-Defined State — validate aero model vs. CFD")
     tbl.add_row("4", "Trim Condition Check — rigid alpha trim, Cm residual")
     tbl.add_row("5", "Inertia VMT (1g) — apply 1g load, plot inertia distribution")
+    tbl.add_row("6", "Control Derivatives — dCL/dδ, dCM/dδ per control surface")
     tbl.add_row("0", "Back to main menu")
     console.print(Panel(tbl, title="[bold]Pre-Analysis Checks[/bold]", border_style="cyan"))
 
@@ -642,6 +733,10 @@ def print_aero_derivative_table(derivatives: dict) -> None:
     tbl.add_row("CM0",           f"{derivatives['cm0_nd']:.4f}")
     tbl.add_row("CMα (per rad)", f"{derivatives['cm_alpha_per_rad']:.4f}")
     tbl.add_row("CMα (per deg)", f"{derivatives['cm_alpha_per_deg']:.4f}")
+    if "cy0_nd" in derivatives:
+        tbl.add_row("CY0",           f"{derivatives['cy0_nd']:.4f}")
+        tbl.add_row("CYβ (per rad)", f"{derivatives['cy_beta_per_rad']:.4f}")
+        tbl.add_row("CYβ (per deg)", f"{derivatives['cy_beta_per_deg']:.4f}")
     console.print(Panel(tbl, title="[bold]Airplane Aerodynamic Derivatives[/bold]", border_style="cyan"))
 
 
@@ -870,4 +965,70 @@ def show_cl_cm_alpha_plot(
         print_error(f"No display available for chart: {exc}")
     finally:
         plt.close("all")
+
+
+def show_cy_beta_plot(
+    beta_deg,
+    cy_nd,
+    nominal_beta_deg: float,
+    title: str,
+) -> None:
+    """Plot total-airplane CY vs sideslip beta with the nominal condition marked."""
+    import numpy as np
+    try:
+        import matplotlib
+        import sys, os
+        if sys.platform == "darwin":
+            matplotlib.use("macosx")
+        elif os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            matplotlib.use("TkAgg")
+        else:
+            matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print_error(f"matplotlib unavailable: {exc}")
+        return
+
+    beta_deg = np.asarray(beta_deg, dtype=float)
+    cy_nd    = np.asarray(cy_nd,    dtype=float)
+
+    try:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 4))
+        fig.suptitle(title, fontsize=12)
+
+        ax.plot(beta_deg, cy_nd, color="#9acd32", marker="o", markersize=4, linewidth=1.5)
+        ax.axvline(nominal_beta_deg, color="#ffd700", linewidth=1.0, linestyle="--",
+                   label=f"β = {nominal_beta_deg:.1f}°")
+        ax.set_ylabel("CY [–]")
+        ax.set_xlabel("β [deg]")
+        ax.legend(fontsize=8)
+        ax.axhline(0, color="white", linewidth=0.5)
+        ax.grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        console.print("[cyan]Displaying CY vs β chart — close window to continue[/cyan]")
+        plt.show()
+    except RuntimeError as exc:
+        print_error(f"No display available for chart: {exc}")
+    finally:
+        plt.close("all")
+
+
+def print_control_derivatives_table(ctrl_derivs: list) -> None:
+    """Display control surface effectiveness derivatives from deflection sweep."""
+    tbl = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    tbl.add_column("Control",      style="cyan", justify="right")
+    tbl.add_column("dCL/dδ /rad",  justify="right")
+    tbl.add_column("dCL/dδ /deg",  justify="right")
+    tbl.add_column("dCM/dδ /rad",  justify="right")
+    tbl.add_column("dCM/dδ /deg",  justify="right")
+    for row in ctrl_derivs:
+        tbl.add_row(
+            row["control_tag"],
+            f"{row['dcl_ddelta_per_rad']:.4f}",
+            f"{row['dcl_ddelta_per_deg']:.4f}",
+            f"{row['dcm_ddelta_per_rad']:.4f}",
+            f"{row['dcm_ddelta_per_deg']:.4f}",
+        )
+    console.print(Panel(tbl, title="[bold]Control Effectiveness Derivatives[/bold]", border_style="cyan"))
 

@@ -8,5 +8,6 @@
     "output_dir": "data/outputs",
     "gust_velocity_above_20kft": 15.24,
     "sigma_w_m_s": 1.0,
-    "k_sigma_nd": 3.0
+    "k_sigma_nd": 3.0,
+    "fos_nd": 1.5
 }

@@ -289,6 +289,26 @@ def solve_rigid_alpha_trim(
     }
 
 
+def compute_strip_normal_integral(
+    cn_sec_nd: np.ndarray,
+    c_m: np.ndarray,
+    y_m: np.ndarray,
+    q_dyn_pa: float,
+) -> float:
+    """
+    Integrate cn × c × q_dyn across span using strip widths.
+
+    Returns the total force normal to the surface [N] — no stability-axis
+    transform. Use for surfaces where cn is the primary body-axis force
+    (e.g. vtail side force, or when a stability-axis transform is not needed).
+    """
+    cn_sec_nd = np.asarray(cn_sec_nd, dtype=float)
+    c_m       = np.asarray(c_m,       dtype=float)
+    y_m       = np.asarray(y_m,       dtype=float)
+    dy_m      = _strip_widths_m(y_m)
+    return float(np.sum(cn_sec_nd * c_m * q_dyn_pa * dy_m))
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------

@@ -100,7 +100,13 @@ The `doc/` directory contains the authoritative standards for this project.
 | Document | Covers |
 |---|---|
 | [`doc/architecture.md`](doc/architecture.md) | Design principles, layer diagram, directory structure, module responsibilities, dependency rules, data flow, adding new features, what does not belong in the source tree |
-| [`doc/analysis_code.md`](doc/analysis_code.md) | Variable naming conventions, unit suffix reference, standard symbol tables, module-level constants, conversion constants, function signatures, analysis method notes per module |
+| [`doc/analysis_code.md`](doc/analysis_code.md) | Variable naming conventions, unit suffix reference, standard symbol tables, module-level constants, conversion constants, function signatures, analysis method notes per module. Contains an overview table that links to the per-type analysis documents below. |
+| [`doc/analysis_sfl.md`](doc/analysis_sfl.md) | Category A — Static Flight Loads: regulatory basis (FAR 25.301–25.427), trim → aero → loads → aeroelastic sequence, condition list columns, primary variables |
+| [`doc/analysis_dfl.md`](doc/analysis_dfl.md) | Category B — Dynamic Flight Loads: maneuver time history (§b1), discrete static-equivalent gust (§b2 / Phase 1), continuous turbulence 2-DOF PSD (§b3 / Phase 1), Phase 2 deferred sub-sections |
+| [`doc/analysis_sgl.md`](doc/analysis_sgl.md) | Category C — Static Ground Loads: quasi-static ground handling cases (braked roll, turn, towing, etc.), FAR 25.489–25.519 regulatory basis |
+| [`doc/analysis_dgl.md`](doc/analysis_dgl.md) | Category D — Dynamic Ground Loads: quasi-static reserve energy landing method (FAR 25.473), landing sub-cases, taxi/braking, Phase 2 dynamic gear model |
+| [`doc/analysis_flaps.md`](doc/analysis_flaps.md) | Category E — Flap/High-Lift Loads (Phase 2 design spec): idealized Pn/Pc pressure distribution method, condition list columns, deferred status |
+| [`doc/analysis_controls.md`](doc/analysis_controls.md) | Category F — Control Surface Loads (Phase 2 design spec): hinge moment, pilot-force, and balance load sub-paths, FAR 25.391–25.427 regulatory basis, deferred status |
 | [`doc/variable_definition.md`](doc/variable_definition.md) | **Coordinate systems** (structural frame x-aft/y-starboard/z-up vs. aerodynamic body-axis frame), **Lomax section-load sign conventions**, SI unit suffix rules, atmospheric and speed symbol tables, module-constant and conversion-constant naming patterns |
 | [`doc/aerospace_variables_reference.csv`](doc/aerospace_variables_reference.csv) | **Authoritative variable name registry** — every quantity's required Python identifier (`code_variable_name`), SI unit, and sign convention (`definition_of_positive`). Must be read before writing any computation code |
 | [`doc/loads_aero_db.md`](doc/loads_aero_db.md) | Aerodynamic database file format, column schema, interpolation method, Mach extrapolation policy — authoritative reference for `aero_db.py` |

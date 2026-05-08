@@ -387,37 +387,81 @@ calculations are always kept separate so neither contaminates the other.
 4. VMT plot — detail surface section loads at nominal state
 5. CL / CM vs α chart — total airplane, all Stage 1 surfaces summed, with
    nominal α marked
-6. Airplane aerodynamic derivatives panel — CL0, CLα, CM0, CMα from linear
-   regression over the full alpha grid
+6. CY vs β chart — total airplane vtail side-force coefficient swept over the
+   vtail beta grid at nominal α and Mach; nominal β marked. Omitted if no vtail
+   surface is included in Stage 1.
+7. Airplane aerodynamic derivatives panel — CL0, CLα, CM0, CMα from linear
+   regression over the full alpha grid; CY0, CYβ from vtail beta sweep (when
+   vtail present)
 
 ---
 
 ## LRA 3D viewer (Decision 31)
 
-The "L — View LRA" menu option displays a station table followed immediately by a
-3D interactive chart in the default browser. The chart is produced by
-`ui.show_lra_3d(surface, stations)` using **Plotly** (`plotly.graph_objects`).
-The VMT charts use matplotlib; the LRA 3D viewer uses Plotly. They are separate
-tools for separate purposes.
+The "L — View LRA" menu option offers two sub-choices:
+- **1 — Single surface**: displays the station table then opens a per-component
+  3D chart in the browser.
+- **2 — Total airplane**: scans `data/lra/lra_*.json`, loads every file, and
+  opens a combined multi-surface 3D chart in the browser.
+
+### Single-surface viewer
+
+`ui.show_lra_3d(surface: str, stations: list)` — one Plotly Scatter3d figure:
+- LRA spine: cyan connected line + markers at all station positions
+- Unit normals: gold line segments, each scaled to 8% of the spine
+  bounding-box diagonal
+- Station labels: white text beside each station (every other label when more
+  than 14 stations, to avoid overlap)
+
+### Combined airplane viewer
+
+`ui.show_lra_3d_airplane(surfaces: list[dict])` — one figure with all surfaces
+overlaid. Each surface gets a distinct spine colour and corresponding normal
+colour from a fixed palette. Station labels are shown for every surface (thinned
+when > 10 stations per surface). Legend entry per surface using the `surface`
+key from the LRA dict.
 
 ```python
-ui.show_lra_3d(surface: str, stations: list) -> None
-    # Opens a Plotly Scatter3d figure in the default browser showing:
-    #   - LRA spine: cyan connected line + markers at all station positions
-    #   - Unit normals: gold line segments, each scaled to 8% of the spine
-    #     bounding-box diagonal
-    #   - Station labels: white text beside each station (every other label
-    #     when more than 14 stations, to avoid overlap)
+ui.show_lra_3d_airplane(surfaces: list) -> None
+    # surfaces: list of dicts from lra.load_lra(), each with 'surface' and 'stations'
 ```
 
-Chart display rules:
+Chart display rules (both viewers):
 - Uses `fig.show()` (Plotly); opens the default browser automatically
 - The TUI prints `[cyan]Opening LRA 3D viewer in browser — close tab when done[/cyan]`
-  before `fig.show()`
+  (single-surface) or `[cyan]Opening combined LRA viewer in browser — close tab when done[/cyan]`
+  (combined) before `fig.show()`
 - If `plotly` is not installed, prints `[red]Error: plotly unavailable: ...[/red]`
-  and returns to the menu; no further error handling is needed (no display
-  environment required)
+  and returns to the menu
 - Equal spatial scale is enforced via `scene.aspectmode="data"` in the layout
+
+---
+
+## Pre-Analysis Check 6 — Control Derivatives
+
+Check 6 computes and displays control surface effectiveness derivatives
+(dCL/dδ and dCM/dδ) by sweeping each selected control's deflection grid at a
+user-specified nominal flight state.
+
+**Inputs:** one baseline `aero_*.csv` + one or more `aero_incr_*.csv` increment
+files (required; re-prompts if none selected) + nominal state (α, β, altitude,
+airspeed, s_ref, MAC).
+
+**Analysis:** for each increment file, the deflection is swept from `defl_min_deg`
+to `defl_max_deg` (11 points minimum, or one point per degree) at the nominal
+state. CL and CM are computed at each point via `loads.compute_integrated_totals()`
+and a linear regression gives dCL/dδ and dCM/dδ in per-rad and per-deg.
+
+**Output:** `ui.print_control_derivatives_table(ctrl_derivs)` — one Rich panel
+titled `"Control Effectiveness Derivatives"` with columns Control / dCL/dδ /rad /
+dCL/dδ /deg / dCM/dδ /rad / dCM/dδ /deg. One row per increment file processed.
+
+```python
+ui.print_control_derivatives_table(ctrl_derivs: list) -> None
+    # ctrl_derivs: list of dicts with keys:
+    #   control_tag, dcl_ddelta_per_rad, dcl_ddelta_per_deg,
+    #   dcm_ddelta_per_rad, dcm_ddelta_per_deg
+```
 
 ---
 

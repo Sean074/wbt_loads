@@ -20,6 +20,17 @@ Input data:
   to radians at ingestion. Full column schema in `decision.md §1b` and
   `doc/analysis_code.md §Condition list`.
 
+Input data checks - LRA
+* 3d plotly plot of component LRA.
+* total airplane (all components) plot of LRA. 
+
+Input data checks - Aerodynamics
+* Plot of aerodynamic VMT for a given component for a specified condition.
+* Plot of total airplane Cl vs alpha, Cm vs alpha, Cy vs beta for a given Mach.
+* Summary of the aircraft derivatives for a given nominal
+* Summary of control derivatives, example Cl with elevator deflection, Cm with
+  elevator deflection.
+
 Outputs:
 * Distributed section loads at each LRA station: shear (Vz, Vy), bending moment
   (Mx, Mz), torsion (My), axial force (Fx) — limit and ultimate, one set per
@@ -27,10 +38,12 @@ Outputs:
 * NASTRAN FORCE and MOMENT bulk data cards — per-condition, per-LRA-station section
   loads formatted for direct consumption by CRITIC_LOADS or other post-processing
   tools. One FORCE card and one MOMENT card per LRA station per condition, grouped
-  by load set ID (SID = condition sequence number).
-* LRA geometry viewer — 3D matplotlib window showing each surface's LRA spine
-  and unit normals at each station (accessible from the "L — View LRA" menu item).
-* Shear-moment-torque (SMT) diagrams.
+  by load set ID (SID = condition sequence number). All load output will be ultimate loads, and identified as ULTIMATE or ULT.
+* Airplane state for each load condition - alpha, beta, control deflection, power, airspeed,
+  inertia accelerations.
+* LRA geometry viewer — 3D plotly window showing each surface's LRA spine
+  and unit normals at each station (accessible from the "L — View LRA" menu item). A full airplane plotly viewe of all components will also be available.
+* Shear-moment-torque (SMT) diagrams (also known as VMT).
 * Trim balance verification — residual forces and moments for each condition.
 * Aircraft simulation vs. load model checks.
 * Aeroelastic effectiveness — flexible vs. rigid control surface effectiveness ratio
@@ -150,6 +163,10 @@ Strip load quantities per spanwise station:
 * Cm — section pitching moment coefficient (reference at 25% local chord)
 * Cc — section chord force coefficient
 
+Data coverage: fuselage.
+* Cz — section force coefficient in body z
+* Cy — section force coefficient in body z
+
 Incremental tables (added to the baseline per active input):
 * Control surface deflection increments — total induction on the main surface
   plus the deflected surface itself, tabulated by surface name and deflection
@@ -174,8 +191,6 @@ coefficients should be used for that load path.
 ## Distributed Mass Model
 
 Mass provided in NASTRAN CONM2 format, CID=0 (global coordinate system only).
-Off-diagonal inertia terms are accepted for whole-aircraft inertia; the
-distributed mass model uses point masses only.
 
 Mass files using local coordinate systems (CID ≠ 0) are not supported. NASTRAN
 RBE2 and CBAR/CBEAM distributed mass entries are outside scope; only CONM2
@@ -239,10 +254,11 @@ Per FAR 25.301(b) and FAR 25.303:
 
 * **Limit loads** — the maximum loads expected in service. Defined by n_z,
   gust velocity, or structural limit.
-* **Ultimate loads** — limit loads multiplied by a factor of safety of 1.5.
+* **Ultimate loads** — limit loads multiplied by a factor of safety.
 
 Both limit and ultimate section loads are computed and reported for every
-active condition.
+active condition. ALL loads output will ONLY ultimate load, ALL output loads
+will be labeled ultimate.
 
 Load envelope selection is performed by CRITIC_LOADS, an independent external
 tool that reads the WBT_LOADS NASTRAN FORCE/MOMENT card output. WBT_LOADS does
@@ -273,7 +289,7 @@ plotly. No framework magic — explicit function calls only.
 User interface is a TUI (terminal user interface):
 * Theme: simple, dark scheme, 1990s engineering-program aesthetic.
 * Libraries: rich (display), prompt_toolkit (input).
-* Main page follows the workflow: load inputs → run analysis → view outputs.
+* Main page follows the workflow: load inputs → input checks → run analysis → view check outputs → save output.
 
 ---
 
@@ -283,8 +299,7 @@ The following are explicitly outside scope:
 
 * Flutter analysis (requires unsteady aerodynamics and modal FEM — use ZAERO
   or NASTRAN SOL 145).
-* Fatigue and damage tolerance (requires cycle counting and crack growth — use
-  dedicated DTA programs).
+* Fatigue and damage tolerance load cases will be defined in a later phase the (requires cycle counting and crack growth — use dedicated DTA programs).
 * Ground-vibration test correlation.
 * CFD mesh generation or aerodynamic database computation — aero data is an input.
 * NASTRAN finite-element model assembly or solve — FEM results are inputs.

@@ -224,7 +224,7 @@ module-level constant `FS = 1.5`; read `fos_nd` from the condition row.
 | Gear normal load | `n_gear_n` | N at contact point |
 | Brake torque | `t_brake_nm` | N·m |
 | Brake friction coefficient | `mu_brake_nd` | dimensionless |
-| Gust mass ratio | `mu_g_nd` | dimensionless; see §b2 formula |
+| Gust mass ratio | `mu_g_nd` | dimensionless; see `doc/analysis_dfl.md §b2` for formula |
 | Vertical bump load factor | `nz_bump_nd` | dimensionless; taxi bump / rough runway |
 
 ### Continuous turbulence — 2-DOF model
@@ -271,7 +271,7 @@ computation module.
 
 ### Flap / high-lift pressure distribution (Category E)
 
-Variables specific to the idealized Pn / Pc method in §e.
+Variables specific to the idealized Pn / Pc method in `doc/analysis_flaps.md`.
 
 | Quantity | Code variable | SI unit | Notes |
 |---|---|---|---|
@@ -406,587 +406,22 @@ def solve_trim(h_press_ft, V_EAS_kts, n_z, x_cg_ft): ...
 
 Six analysis method categories map to the six TUI analysis types from
 `decision.md §9`. The same aerodynamic database, mass model, and LRA
-infrastructure support all categories. Each is described below.
+infrastructure support all categories.
 
-| TUI Category | TUI label | Sub-categories | Analysis method section | Phase |
-|---|---|---|---|---|
-| A — Static Flight Loads | SFL | A.1 Longitudinal – Balanced, A.2 Longitudinal – Maneuver, A.3 Lateral – Balanced, A.4 Lateral – Maneuver | §a | 1 |
-| B — Dynamic Flight Loads | DFL | B.1 PSD (continuous turbulence), B.2 TDG (discrete gust) | §b | 1 (both Phase 1 simplified); 2 (DLM, 1-cosine TDG) |
-| C — Static Ground Loads | SGL | — | §c | 1 |
-| D — Dynamic Ground Loads | DGL | D.1 Landing, D.2 Taxi/Braking | §d | 1 (quasi-static); 2 (dynamic gear) |
-| E — Flap / High-Lift Loads | FLAPS | — | §e | 2 (deferred) |
-| F — Control Surface Loads | CONTROLS | — | §f | 2 (deferred) |
-
-All equations use SI quantities throughout.
-
----
-
-### a) Static flight loads
-
-**Regulatory basis:**
-
-| Load case | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|
-| General structural loads — limit and ultimate definition | 25.301 | 23.301 |
-| Factor of safety (1.5 on limit loads) | 25.303 | 23.303 |
-| Flight maneuvering envelope (V-n diagram) | 25.333 | 23.333 |
-| Design airspeeds (V_A, V_B, V_C, V_D) | 25.335 | 23.335 |
-| Limit maneuver load factors | 25.337 | 23.337 |
-| Symmetric pull-up and push-over | 25.331 | 23.331 |
-| Unsymmetrical loads (100%/80% HT loading) | 25.347 | 23.347 |
-| Rolling pull-out | 25.349 | 23.349 |
-| Yaw maneuver conditions | 25.351 | 23.351 |
-| High lift devices (flap/slat extended) | 25.345 | 23.345 |
-| Engine failure / asymmetric thrust | 25.367 | 23.367 |
-| Control surface and tab loads | 25.391–25.427 | 23.391–23.427 |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-CS-25 and CS-23 section numbers are identical to their FAR counterparts.
-
-**Method:** Quasi-static equilibrium. The aircraft is in a balanced, non-accelerating
-flight state (or a steady-state maneuver) defined by a fixed load factor `nz_nd`.
-No time integration is performed.
-
-**Sequence:**
-
-1. **Trim solve** (`trim.py`) — find α, δ_e, and thrust such that the three
-   equilibrium equations are satisfied simultaneously:
-
-   ```
-   L = nz_nd × w_aircraft_n           (lift equals weight × load factor)
-   ΣM_pitch = 0                        (pitching moment balance at CG)
-   T = D                               (thrust equals drag)
-   ```
-
-   Solved by `scipy.optimize.root` with tolerance `APP_CONFIG["trim_tol"]`.
-   Solve variables: `alpha_rad`, `delta_e_rad`, `t_thrust_n`.
-
-2. **Aerodynamic interpolation** (`aero_db.py`) — evaluate strip load arrays at
-   the trimmed flight state:
-
-   ```
-   cn_sec_nd(y), cm_sec_nd(y), cc_sec_nd(y) =
-       interpolate(alpha_rad, beta_rad, p_roll_rad_s,
-                   q_pitch_rad_s, r_yaw_rad_s, delta_e_rad, ...)
-   ```
-
-   Add control surface and rate increments. If flight Mach falls outside the
-   aero database table range, `aero_db.py` applies Prandtl-Glauert extrapolation
-   and emits a TUI warning. See `doc/loads_aero_db.md §Mach extrapolation
-   fallback` for the formula and warning text.
-
-   Apply downwash correction at the horizontal tail.
-
-3. **Loads summation** (`loads.py`) — integrate strip loads to LRA section cuts.
-
-   Aerodynamic contribution per strip panel of width `dy_m`:
-
-   ```
-   dvz = cn_sec_nd × q_dyn_pa × c_m × dy_m
-   dmx = dvz × (y_lra_m - y_strip_m)       (bending moment arm)
-   dmy = cm_sec_nd × q_dyn_pa × c_m² × dy_m  (torsion from Cm about c/4)
-   ```
-
-   Inertia contribution per point mass:
-
-   ```
-   f_inertia_n = m_ac_kg × G_M_S2 × nz_nd
-   ```
-
-   Moment arm from mass point to LRA determines inertia bending and torsion
-   contributions. Aerodynamic and inertia contributions are summed at each LRA
-   station to give net section loads: `vz_n`, `vx_n`, `fy_n`, `mx_nm`, `my_nm`,
-   `mz_nm`.
-
-4. **Aeroelastic corrections** (`aeroelastic.py`) — when the elastic model is
-   present, apply structural flexibility correction:
-
-   ```
-   {δ} = [f_flex] × {P}     (deflection from flexibility matrix × load vector)
-   ```
-
-   Re-evaluate strip loads at the deflected geometry. Iterate between steps 2–4
-   until the change in section loads between iterations is below
-   `APP_CONFIG["flex_tol"]`.
-
-5. **Ultimate loads** (`loads.py`) — multiply limit loads by the per-condition
-   `fos_nd` (read from the condition row) to produce ultimate loads.
-   `fos_nd = 1.5` is the standard value per FAR 25.303; `fos_nd = 1.0` applies
-   when regulations define the load condition as limit treated as ultimate (e.g.
-   certain failure cases under FAR/CS 25.302). All WBT_LOADS outputs are ultimate
-   loads; the `fos_nd` value is carried through to the output file alongside
-   the load magnitudes so the derivation is traceable.
-
-**Primary variables:** `nz_nd`, `alpha_rad`, `q_dyn_pa`, `mach_nd`,
-`delta_e_rad`, `cn_sec_nd`, `cm_sec_nd`, `cc_sec_nd`, `vz_n`, `mx_nm`,
-`my_nm`, `nz_ult_nd`, `e_flex_nd`
-
-**Modules:** `trim.py` → `aero_db.py` → `loads.py` → `aeroelastic.py`
-
----
-
-### b) Dynamic flight loads
-
-**Regulatory basis:**
-
-| Load case | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|
-| Checked maneuver (pitch rate reversal) | 25.331(c) | 23.331 |
-| Rolling pull-out | 25.349 | 23.349 |
-| Yaw maneuver | 25.351 | 23.351 |
-| Discrete vertical and lateral gust (1-cosine) | 25.341(a) | 23.341 |
-| Continuous turbulence — power spectral density | 25.341(b) | — |
-| Dynamic gust loads implementation guidance | AC 25.341-1 / AMC 25.341-1 | — |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-FAR 23 does not require continuous turbulence PSD analysis; the discrete gust
-method per 23.341 is sufficient for FAR 23 certification.
-
-Two separate dynamic load paths exist: maneuver time history and gust response.
-Both produce a time-varying load array from which the critical instant is extracted.
-
-#### b1) Maneuver time history
-
-**Method:** Integrate the rigid-body equations of motion over a prescribed
-maneuver profile using `scipy.integrate.solve_ivp`.
-
-State vector: `[alpha_rad, q_pitch_rad_s, p_roll_rad_s, r_yaw_rad_s, phi_rad]`
-
-At each time step:
-1. Interpolate strip loads at the current flight state → `cn_sec_nd(y,t)`, `cm_sec_nd(y,t)`, `cc_sec_nd(y,t)`
-2. Compute section loads via `loads.py` summation
-3. Store section load arrays at this time step
-
-Supported maneuver types and their governing DOF:
-
-| Maneuver | Active DOF | FAR 25 / CS-25 | FAR 23 / CS-23 |
+| TUI Category | TUI label | Specification document | Phase |
 |---|---|---|---|
-| Symmetric pull-up | α, q | 25.331(b) | 23.331 |
-| Push-over | α, q | 25.331(b) | 23.331 |
-| Checked maneuver | α, q (with pitch rate reversal) | 25.331(c) | 23.331 |
-| Rolling pull-out | α, q, p, φ | 25.349 | 23.349 |
-| Yaw maneuver | β, r (with prescribed δ_r input) | 25.351 | 23.351 |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-**Critical instant extraction:** scan the complete time history for the maximum
-positive and maximum negative value of each load component at each LRA station.
-The time-point that produces each extremum is the critical instant for that
-component.
-
-**Primary variables:** `t_s`, `alpha_rad`, `q_pitch_rad_s`, `p_roll_rad_s`,
-`r_yaw_rad_s`, `phi_rad`, `beta_rad`, `delta_r_rad`, `vz_n`, `mx_nm`
-
-**Modules:** `maneuver.py` → `aero_db.py` → `loads.py`
-
-#### b2) Discrete gust — static equivalent method (Phase 1)
-
-**Regulatory basis:** original FAR Part 25 Appendix G, pre-Amendment 25-86
-(1996), as described in Lomax, *Structural Loads Analysis for Commercial
-Transport Aircraft*, AIAA 1996, Chapter 4.
-
-**Phase 1 method — no 1-cosine profile; no H sweep.**
-
-Design gust velocities (pre-1996 FAR Part 25 Appendix G, converted to SI at
-ingestion in `gust.py`):
-
-| Altitude | Imperial | SI |
-|---|---|---|
-| Sea level (0 m) | 50 fps EAS | 15.24 m/s EAS |
-| 20 000 ft (6 096 m) | 25 fps EAS | 7.62 m/s EAS |
-
-Interpolation: linear between 0 m and 6 096 m. Above 6 096 m: controlled by
-`APP_CONFIG["gust_velocity_above_20kft"]` — `"extrapolate"` (default) or `"cap"`.
-
-Gust alleviation factor (identical formula to the current regulation):
-
-```
-k_gust_nd = 0.88 × mu_g_nd / (5.3 + mu_g_nd)
-
-mu_g_nd = 2 × m_ac_kg / (rho_kg_m3 × mac_m × s_ref_m2 × a_slope_nd)
-```
-
-Incremental load factor (all quantities in SI):
-
-```
-delta_nz_nd = (k_gust_nd × u_gust_m_s × v_eas_m_s × a_slope_nd)
-              / (2 × (w_aircraft_n / s_ref_m2))
-```
-
-where `w_aircraft_n = m_ac_kg × G_M_S2`. Both positive and negative increments
-are evaluated: `nz_nd = 1.0 ± delta_nz_nd`. `a_slope_nd` is the whole-aircraft
-lift curve slope (per radian) from the trim aerodynamic state.
-
-`h_gust_m`, `gust_gradient_min_ft`, `gust_gradient_max_ft`, and `n_gust_steps`
-are **not used** in Phase 1; they are reserved for the Phase 2 TDG.
-
-**Primary variables:** `u_gust_m_s`, `k_gust_nd`, `mu_g_nd`, `a_slope_nd`,
-`delta_nz_nd`, `rho_kg_m3`, `mac_m`, `s_ref_m2`, `m_ac_kg`, `w_aircraft_n`,
-`v_eas_m_s`
-
-**Modules:** `gust.py` (see decision.md §11) → `aero_db.py` → `loads.py`
-
-##### b2-Phase2) Discrete gust — 1-cosine TDG (Phase 2 / deferred)
-
-**Regulatory basis:** FAR 25.341(a); AC 25.341-1 (Amendment 25-86 and later).
-
-Gust velocity profile:
-`u_gust_inst_m_s(s) = (u_gust_m_s / 2) × (1 − cos(π × s / h_gust_m))`
-for `0 ≤ s ≤ 2 × h_gust_m`. Design gust velocities from current FAR 25.341(a)
-table: 17.07 m/s EAS at sea level, 6.36 m/s at 18 288 m. H sweep from 9 to
-107 m (30–350 ft) using `n_gust_steps`. This sub-section is a placeholder only;
-Phase 2 implementation is deferred.
-
-#### b3) Continuous turbulence — 2-DOF rigid-body frequency response (Phase 1)
-
-**Regulatory basis:** FAR 25.341(b); AC 25.341-1.
-
-**Phase 1 method:** self-contained 2-DOF rigid-body plunge-pitch model with
-strip-theory aerodynamics. No DLM, no NASTRAN required.
-
-**Equations of motion (frequency domain):**
-
-State vector: `[w_m_s (heave velocity), theta_rad (pitch angle)]`.
-The 2×2 system in the frequency domain:
-
-```
-(-ω² × M_sys + j×ω × C_sys + K_sys) × X(ω) = F_gust(ω)
-```
-
-`M_sys`, `C_sys`, `K_sys` are assembled from aircraft mass properties and
-strip-theory derivatives (`a_slope_nd`, `a_tail_nd`, `v_tail_nd`). The
-short-period natural frequency and damping ratio are extracted from the
-eigenvalues of the system matrix and stored as `omega_sp_rad_s` and
-`zeta_sp_nd`.
-
-**Frequency response functions:**
-
-For each frequency in the grid `omega_rad_s`, solve the 2×2 system to yield:
-
-```
-h_nz_nd(jω)  — complex FRF: load factor per unit gust velocity [(m/s)/(m/s)]
-h_my_nm(jω)  — complex FRF: wing root bending moment per unit gust velocity [N·m/(m/s)]
-```
-
-Frequency grid: logarithmically spaced, 0.01–100 rad/s, ≥ 500 points.
-
-**Von Kármán turbulence PSD (FAR 25.341(b), AC 25.341-1):**
-
-```
-phi_u_m2_s(ω) = sigma_w_m_s² × (l_turb_m / π) ×
-    (1 + (8/3) × (1.339 × l_turb_m × ω / v_tas_m_s)²) /
-    (1 + (1.339 × l_turb_m × ω / v_tas_m_s)²)^(11/6)
-```
-
-`sigma_w_m_s` from `APP_CONFIG` (default 1.0 m/s).
-`l_turb_m = 762 m` (2 500 ft) per AC 25.341-1.
-
-**RMS load computation:**
-
-```python
-sigma_nz_nd = sqrt(trapz(abs(h_nz_nd)**2 * phi_u_m2_s, omega_rad_s))
-sigma_my_nm = sqrt(trapz(abs(h_my_nm)**2 * phi_u_m2_s, omega_rad_s))
-```
-
-**Design limit loads:**
-
-```
-nz_limit_nd = k_sigma_nd × sigma_nz_nd
-my_limit_nm = k_sigma_nd × sigma_my_nm
-```
-
-`k_sigma_nd = 3.0` (limit load factor method per AC 25.341-1); configurable
-in `config/defaults.json`.
-
-**Primary variables:** `omega_sp_rad_s`, `zeta_sp_nd`, `phi_u_m2_s`,
-`h_nz_nd`, `h_my_nm`, `sigma_nz_nd`, `sigma_my_nm`, `sigma_w_m_s`,
-`l_turb_m`, `k_sigma_nd`, `omega_rad_s`
-
-**Modules:** `gust.py` (see decision.md §11) → `aero_db.py` → `loads.py`
-
-##### b3-Phase2) Continuous turbulence — DLM/NASTRAN PSD (Phase 2 / deferred)
-
-Phase 2 replaces the 2-DOF rigid-body FRF with FRFs from a full NASTRAN DLM or
-ZONA51 aerodynamic analysis on the flexible structure. Regulatory basis: FAR
-25.341(b); AC 25.341-1. Deferred to a future release.
-
----
-
-### c) Static ground loads (ground handling)
-
-**Regulatory basis:**
-
-| Case | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|
-| Ground handling conditions — general | 25.489 | 23.489 |
-| Taxi, takeoff and landing roll | 25.491 | 23.491 |
-| Side load (lateral) | 25.485 | 23.485 |
-| Braked roll | 25.493 | 23.493 |
-| Turning (taxiing) | 25.495 | 23.495 |
-| Tail wheel yawing | 25.497 | 23.497 |
-| Nose-wheel yaw and steering | 25.499 | 23.499 |
-| Pivoting | 25.503 | 23.503 |
-| Reversed braking | 25.507 | 23.507 |
-| Towing loads | 25.509 | 23.509 |
-| Jacking and tie-down provisions | 25.519 | 23.519 |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-**Method:** Quasi-static force and moment balance. No aerodynamic loads; no time
-integration. Applied loads (brake torque, tow force, centrifugal force) are
-balanced by inertia reactions at the CG and structural loads at attachment points.
-
-Ground handling cases and their governing applied loads:
-
-| Case | Applied load | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|---|
-| Braked roll | `t_brake_nm` = `mu_brake_nd` × `n_gear_n` × `r_wheel_m` | 25.493 | 23.493 |
-| Ground turn (taxiing) | Centrifugal = `m_ac_kg` × `v_ground_m_s`² / `r_turn_m` | 25.495 | 23.495 |
-| Nose-wheel yaw | Lateral side force at nose gear | 25.499 | 23.499 |
-| Towing | Tow force at tow fitting; direction per FAR/CS 25.509 | 25.509 | 23.509 |
-| Pivoting | Friction at one main gear with other gear as pivot | 25.503 | 23.503 |
-| Jacking | Vertical jack load at each jack point | 25.519 | 23.519 |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-**Sequence:**
-
-1. Define ground load case: applied load magnitude, direction, and attachment point.
-2. Compute inertia reactions at CG:
-   ```
-   f_inertia_n = m_ac_kg × nx_nd × G_M_S2    (braking)
-   f_inertia_n = m_ac_kg × ny_nd × G_M_S2    (lateral cases)
-   ```
-3. Sum all applied and inertia loads to LRA section cuts using `loads.py`.
-4. No aerodynamic contribution (speed too low or aircraft at rest).
-
-Friction coefficient for braked roll: `mu_brake_nd` is specified in the
-condition list; typical value 0.80 for dry runway per FAR 25.493.
-
-**Primary variables:** `nx_nd`, `ny_nd`, `t_brake_nm`, `mu_brake_nd`,
-`v_ground_m_s`, `r_turn_m`, `n_gear_n`
-
-**Modules:** `ground.py` → `mass_model.py` → `loads.py`
-
----
-
-### d) Dynamic ground and landing loads
-
-**Regulatory basis:**
-
-| Case | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|
-| Landing loads — general conditions and assumptions | 25.473 | 23.473 |
-| Landing gear arrangement | 25.477 | 23.477 |
-| Level landing conditions | 25.479 | 23.479 |
-| Tail-down landing conditions | 25.481 | 23.481 |
-| One-gear landing conditions | 25.483 | 23.483 |
-| Side load / lateral drift | 25.485 | 23.485 |
-| Rebound landing | 25.487 | 23.487 |
-| Taxi, takeoff and landing roll | 25.491 | 23.491 |
-| Ground load dynamic conditions | 25.511 | 23.511 |
-| Landing gear dynamic loads — implementation guidance | AC 25.491-1 | — |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-**Method:** Two options — quasi-static reserve energy method (simpler) or dynamic
-impact analysis (higher fidelity). The method is subject to decision.md §3.
-
-#### d1) Quasi-static reserve energy method (FAR/CS 25.473 default)
-
-The peak vertical gear reaction is derived from energy conservation, assuming the
-gear absorbs the kinetic energy of the sink rate over the gear stroke:
-
-```
-f_gear_n = w_aircraft_n × eta_gear_nd
-           × (1 + v_sink_m_s² / (2 × G_M_S2 × d_stroke_m))
-```
-
-where:
-- `eta_gear_nd` = gear absorption efficiency (typically 0.80 per FAR 25.473(b))
-- `d_stroke_m` = available gear stroke (from gear design data or condition input)
-- `v_sink_m_s` = design sink rate (3.05 m/s at max landing weight; 1.83 m/s at
-  max takeoff weight, per FAR/CS 25.473(a))
-
-This peak gear reaction is treated as a quasi-static vertical load applied at the
-gear attachment point. The resulting aircraft loads are computed as a static case
-with an effective load factor:
-
-```
-nz_eff_nd = f_gear_n / w_aircraft_n
-```
-
-#### d2) Landing sub-cases
-
-Each sub-case modifies how the gear reaction is distributed and applies additional
-load components:
-
-| Sub-case | Vertical load | Lateral load | Drag load | FAR 25 / CS-25 | FAR 23 / CS-23 |
-|---|---|---|---|---|---|
-| Level landing (2-point) | Full gear reaction split per strut geometry | — | 0.25 × vertical (aft) | 25.479 | 23.479 |
-| Tail-down landing | Main gear reaction only; nose gear unloaded | — | 0.25 × vertical | 25.481 | 23.481 |
-| One-gear landing | 100% of limit vertical at one main gear | 0.25 × vertical (outboard) | per 25.479 | 25.483 | 23.483 |
-| Lateral drift | Per level landing | 0.25 × vertical (side) | — | 25.485 | 23.485 |
-| Rebound | Aircraft lifts off after ground contact; gear fully extended | — | — | 25.487 | 23.487 |
-
-> **FAR 23 / CS-23 column — reference only.** FAR 23 is not implemented in the
-> current release (Decision 6, Option C). All computation uses FAR 25 / CS-25
-> formulas. When FAR 23 is implemented, formula dispatch will occur via
-> `src/far_reg.py` and a `cert_basis` field in the condition list; see
-> `doc/architecture.md §FAR 23 provision`.
-
-For tail-down landing, the aircraft contacts at angle `alpha_td_rad` (the attitude
-at which the tail structure first contacts the runway), applying a nose-up
-pitching moment in addition to the vertical gear reaction.
-
-#### d3) Dynamic impact analysis (if selected in decision.md §3)
-
-Model landing gear as a spring-damper system:
-
-```
-f_gear_n(t) = k_gear_n_m × x_m(t) + c_gear_ns_m × x_dot_m_s(t)
-```
-
-Integrate the coupled aircraft + gear equations of motion from initial conditions
-(aircraft at `v_sink_m_s` descent rate, gear unloaded) until gear stroke is exhausted
-or the aircraft rebounds. Extract the time history of gear attachment loads and
-airframe section loads. Critical loads are the extrema over the time history.
-
-**Primary variables:** `v_sink_m_s`, `d_stroke_m`, `eta_gear_nd`, `nz_eff_nd`,
-`f_gear_n`, `alpha_td_rad`, `k_gear_n_m`, `c_gear_ns_m`, `nx_nd`, `ny_nd`
-
-**Modules:** `ground.py` → `mass_model.py` → `loads.py`
-
----
-
-### e) Flap / high-lift loads (deferred — Phase 2)
-
-**Status:** Deferred to Phase 2. No analysis code or CSV schema is defined in
-Phase 1. The Category E slot is reserved in the TUI and `data/conditions/flap/`
-directory is created but remains empty. This section is the design specification
-for the Phase 2 implementation.
-
-**Regulatory basis:**
-
-| Load case | FAR 25 / CS-25 |
-|---|---|
-| High lift device — flap/slat extended conditions | 25.345 |
-| Limit maneuver load factors with high-lift devices | 25.345(a) |
-| Gust loads with high-lift devices | 25.345(b) |
-
-**Method:** Idealized pressure distributions matched to the section loads of a
-referenced parent WBT condition. The parent condition (a Category A or B case
-already solved) provides the integrated normal and chord loads at each strip
-station over the flap span. An idealized chordwise pressure distribution is
-then constructed so that:
-
-- **Pn** (normal load, perpendicular to local chord) integrates over the flap
-  chord to match the parent WBT strip normal load per unit span at that station.
-- **Pc** (chord load, parallel to local chord) integrates over the flap chord to
-  match the parent WBT strip chord load per unit span at that station.
-
-The induced aeroelastic deflection is taken directly from the parent WBT case
-result (the flexibility-corrected deflected geometry stored in the parent
-condition output). No separate aeroelastic iteration is performed for the flap
-case; the flap loads are applied to the already-deflected shape.
-
-**Sequence:**
-
-1. **Parent WBT case lookup** — the condition list `ref_condition_id` column
-   identifies the parent Category A or B condition. Load the parent case output
-   section loads and aeroelastic deflection from the results cache.
-
-2. **Strip normal and chord loads from parent** — at each spanwise station over
-   the flap extent, extract:
-
-   ```
-   fn_n_m[j]  = vz_n_parent[j] / dy_m[j]    (normal load per unit span, N/m)
-   fc_n_m[j]  = vx_n_parent[j] / dy_m[j]    (chord load per unit span, N/m)
-   ```
-
-3. **Idealized chordwise pressure distribution** — construct Pn and Pc as
-   distributions over the flap chord fraction `x_f` ∈ [0, 1] (0 = flap hinge,
-   1 = trailing edge). The distribution shape (uniform, linear, or user-supplied)
-   is specified in the condition row via `pn_shape` and `pc_shape`. The
-   distributions are scaled so that:
-
-   ```
-   ∫ pn_pa(x_f) dx_f × c_flap_m = fn_n_m[j]
-   ∫ pc_pa(x_f) dx_f × c_flap_m = fc_n_m[j]
-   ```
-
-   where `c_flap_m` is the local flap chord (m). Supported distribution shapes:
-
-   | Shape keyword | Pn / Pc profile | Notes |
-   |---|---|---|
-   | `uniform` | constant across chord | Conservative; default if not specified |
-   | `linear_LE` | linearly decreasing from hinge to TE | Higher loading near hinge |
-   | `linear_TE` | linearly increasing from hinge to TE | Higher loading near TE |
-   | `user` | tabulated in condition CSV columns `pn_x_*` / `pc_x_*` | Analyst-supplied shape |
-
-4. **Section loads summation** (`loads.py`) — integrate the Pn and Pc strip
-   distributions over the flap span to LRA section cuts, producing `vz_n`,
-   `vx_n`, `mx_nm`, `my_nm` at each LRA station. Moment arms are computed to
-   the LRA using the deflected geometry from the parent case.
-
-5. **Ultimate loads** — apply per-condition `fos_nd` from the condition list,
-   identical to all other categories.
-
-**Condition list columns specific to Category E:**
-
-| Column | Code variable | Notes |
-|---|---|---|
-| `ref_condition_id` | `ref_condition_id` | String; `condition_id` of the parent WBT Category A or B case |
-| `flap_chord_m` | `c_flap_m` | Local flap chord (m); may be spanwise-varying via `flap_chord_*` columns |
-| `pn_shape` | `pn_shape` | Distribution shape keyword for Pn; see table above |
-| `pc_shape` | `pc_shape` | Distribution shape keyword for Pc; see table above |
-
-A non-zero `flap_deg` column in the condition CSV activates the Category E
-handler. Routing to §e is triggered by `flap_deg > 0`; `ref_condition_id` is
-then mandatory.
-
-**Primary variables:** `pn_pa`, `pc_pa`, `fn_n_m`, `fc_n_m`, `c_flap_m`,
-`ref_condition_id`, `delta_f_rad`, `vz_n`, `vx_n`, `mx_nm`, `my_nm`
-
-**Modules:** `loads.py` (using parent case output; no trim or aero DB call)
-
----
-
-### f) Control surface loads (deferred — Phase 2)
-
-**Regulatory basis:** FAR 25.395 (pilot applied loads), 25.397 (surface balance
-loads), 25.405 (secondary control loads).
-
-**Status:** Deferred to Phase 2. No analysis code or CSV schema is defined in Phase 1.
-The Category F slot is reserved in the TUI and `data/conditions/control_surface/`
-directory. This section is a placeholder; content will be added when Phase 2 is
-implemented.
+| A — Static Flight Loads | SFL | [`doc/analysis_sfl.md`](analysis_sfl.md) | 1 |
+| B — Dynamic Flight Loads | DFL | [`doc/analysis_dfl.md`](analysis_dfl.md) | 1 (simplified); 2 (DLM, 1-cosine TDG) |
+| C — Static Ground Loads | SGL | [`doc/analysis_sgl.md`](analysis_sgl.md) | 1 |
+| D — Dynamic Ground Loads | DGL | [`doc/analysis_dgl.md`](analysis_dgl.md) | 1 (quasi-static); 2 (dynamic gear) |
+| E — Flap / High-Lift Loads | FLAPS | [`doc/analysis_flaps.md`](analysis_flaps.md) | 2 (deferred) |
+| F — Control Surface Loads | CONTROLS | [`doc/analysis_controls.md`](analysis_controls.md) | 2 (deferred) |
+
+Each linked document covers: regulatory basis, analysis sequence, primary
+variables, modules used, condition list columns, and any Phase 2 deferred
+sub-sections. All equations use SI quantities throughout. The naming conventions,
+unit rules, symbol tables, and module implementation notes on this page apply
+uniformly to all categories.
 
 ---
 
@@ -1038,7 +473,7 @@ WBT_LOADS module. Users may call it from standalone tools or scripts.
 Loads strip load tables (`cn_sec_nd`, `cm_sec_nd`, `cc_sec_nd`) and incremental
 tables (control surface deflections, angular rates) from CSV files. Interpolates
 to produce spanwise arrays for a given flight state. Used by static flight loads
-(§a), dynamic flight loads (§b), and indirectly by ground loads when aerodynamic
+(analysis_sfl.md), dynamic flight loads (analysis_dfl.md), and indirectly by ground loads when aerodynamic
 loads are present (e.g. landing roll at V > 0).
 
 **File format, column schema, interpolation method, and Mach extrapolation
@@ -1096,8 +531,8 @@ all four analysis methods as the common reference for section-load output.
 
 ### `trim.py` — Trim solver
 
-Used by: static flight loads (§a) and as the initial state for dynamic flight
-loads (§b).
+Used by: static flight loads (analysis_sfl.md) and as the initial state for dynamic flight
+loads (analysis_dfl.md).
 
 Solves the three-equation trim balance (lift = weight × `nz_nd`, pitch moment = 0,
 thrust = drag) using `scipy.optimize.root` with tolerance `APP_CONFIG["trim_tol"]`.
@@ -1113,7 +548,7 @@ checking. The trim result dict is passed as an argument to `loads.compute_loads`
 
 ### `maneuver.py` — Maneuver time history
 
-Used by: dynamic flight loads (§b1).
+Used by: dynamic flight loads (analysis_dfl.md §b1).
 
 Integrates the equations of motion over a prescribed maneuver profile using
 `scipy.integrate.solve_ivp`. Supported types: symmetric pull-up, push-over,
@@ -1127,7 +562,7 @@ instant per load component extracted by `argmax`/`argmin` over the time axis.
 
 ### `ground.py` — Ground loads
 
-Used by: static ground loads (§c) and dynamic ground and landing loads (§d).
+Used by: static ground loads (analysis_sgl.md) and dynamic ground and landing loads (analysis_dgl.md).
 No aerodynamic contribution; no time integration. All Phase 1 methods are
 quasi-static.
 
@@ -1169,15 +604,15 @@ using `FPS_M_S` from `unit_convert.py` before this formula.
 
 ### `gust.py` — Gust loads
 
-Used by: dynamic flight loads (§b). Implements two Phase 1 gust paths.
+Used by: dynamic flight loads (analysis_dfl.md). Implements two Phase 1 gust paths.
 
-**Static equivalent discrete gust (§b2):** takes `u_gust_m_s`, `v_eas_m_s`,
+**Static equivalent discrete gust (analysis_dfl.md §b2):** takes `u_gust_m_s`, `v_eas_m_s`,
 `rho_kg_m3`, `mac_m`, `s_ref_m2`, `m_ac_kg`, and `a_slope_nd` from the trim
 state. Returns `delta_nz_nd` as an increment on the trim load factor passed
 to `loads.py`. Routing: `maneuver_type` in
 `{discrete_gust_vertical, discrete_gust_lateral}`.
 
-**2-DOF continuous turbulence (§b3):** assembles the plunge-pitch system from
+**2-DOF continuous turbulence (analysis_dfl.md §b3):** assembles the plunge-pitch system from
 aircraft mass properties and strip-theory derivatives, computes complex FRFs
 `h_nz_nd` and `h_my_nm` over the frequency grid, integrates the Von Kármán
 PSD, and returns RMS loads `sigma_nz_nd` and `sigma_my_nm` and design limit
@@ -1265,7 +700,7 @@ Where:
 
 ### `aeroelastic.py` — Aeroelastic corrections and jig shape
 
-Used by: static flight loads (§a) only. Not applied to ground loads.
+Used by: static flight loads (analysis_sfl.md) only. Not applied to ground loads.
 
 Applies structural flexibility corrections via the flexibility matrix `f_flex`.
 Iterates between aerodynamic load and elastic deflection until convergence
@@ -1292,7 +727,7 @@ jig shape station offsets in metres.
 
 ### `aero_trim.py` — Coupled aeroelastic trim (Decision 13)
 
-Used by: static flight loads (§a) when elastic corrections are active.
+Used by: static flight loads (analysis_sfl.md) when elastic corrections are active.
 `menu.py` calls `aero_trim.solve(...)` instead of calling `trim` and
 `aeroelastic` directly.
 
