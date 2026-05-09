@@ -148,12 +148,14 @@ def handle_atmos_check() -> None:
 
     # --- ANALYSIS ---
     v_tas_m_s = atmos.eas_to_tas(v_eas_m_s, h_m)
+    v_cas_m_s = atmos.tas_to_cas(v_tas_m_s, h_m)
     a_m_s = atmos.speed_of_sound(h_m)
     state = {
         "rho_kg_m3": atmos.density(h_m),
         "p_pa":      atmos.pressure(h_m),
         "t_k":       atmos.temperature(h_m),
         "a_m_s":     a_m_s,
+        "v_cas_m_s": v_cas_m_s,
         "v_tas_m_s": v_tas_m_s,
         "mach_nd":   v_tas_m_s / a_m_s,
         "q_dyn_pa":  atmos.dynamic_pressure(v_tas_m_s, h_m),

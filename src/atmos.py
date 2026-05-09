@@ -14,6 +14,7 @@ _P_TROP  = P_0_PA * (_T_TROP / T_0_K) ** (G_M_S2 / (-_L_K_M * 287.058))
 _RHO_TROP = RHO_0_KG_M3 * (_T_TROP / T_0_K) ** (G_M_S2 / (-_L_K_M * 287.058) - 1)
 
 _R_AIR   = 287.058   # specific gas constant for dry air, J/(kg·K)
+_A_0_M_S = math.sqrt(GAMMA * _R_AIR * T_0_K)  # sea-level speed of sound, m/s
 
 H_MAX_M  = 15545.0   # maximum valid altitude, m (~51 000 ft)
 
@@ -52,6 +53,14 @@ def eas_to_tas(v_eas_m_s: float, h_m: float) -> float:
     _check_altitude(h_m)
     rho = density(h_m)
     return v_eas_m_s * math.sqrt(RHO_0_KG_M3 / rho)
+
+
+def tas_to_cas(v_tas_m_s: float, h_m: float) -> float:
+    _check_altitude(h_m)
+    p    = pressure(h_m)
+    mach = v_tas_m_s / speed_of_sound(h_m)
+    q_c  = p * ((1.0 + 0.2 * mach ** 2) ** 3.5 - 1.0)
+    return _A_0_M_S * math.sqrt(5.0 * ((q_c / P_0_PA + 1.0) ** (2.0 / 7.0) - 1.0))
 
 
 def dynamic_pressure(v_tas_m_s: float, h_m: float) -> float:

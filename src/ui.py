@@ -571,6 +571,8 @@ def print_atmos_table(h_m: float, v_eas_m_s: float, state: dict) -> None:
     v_kts = v_eas_m_s * M_S_KTS
     tbl.add_row("Altitude", f"{h_m:.1f} m", f"{h_ft:.0f} ft")
     tbl.add_row("EAS", f"{v_eas_m_s:.2f} m/s", f"{v_kts:.1f} kts")
+    tbl.add_row("CAS", f"{state['v_cas_m_s']:.2f} m/s",
+                f"{state['v_cas_m_s'] * M_S_KTS:.1f} kts")
     tbl.add_row("TAS", f"{state['v_tas_m_s']:.2f} m/s",
                 f"{state['v_tas_m_s'] * M_S_KTS:.1f} kts")
     tbl.add_row("Density", f"{state['rho_kg_m3']:.4f} kg/m³", "")
